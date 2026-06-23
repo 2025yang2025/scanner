@@ -6,7 +6,6 @@ TICKERS = ["2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "2881.TW"]
 
 # 自訂純 Pandas 計算 MACD 函數
 def calculate_macd(df, fast=12, slow=26, signal=9):
-    # ewm 是指數加權移動平均 (EMA)
     fast_ema = df['Close'].ewm(span=fast, adjust=False).mean()
     slow_ema = df['Close'].ewm(span=slow, adjust=False).mean()
     macd_line = fast_ema - slow_ema
@@ -64,7 +63,6 @@ if __name__ == "__main__":
     # 將選股結果寫入 Markdown
     with open("results.md", "w", encoding="utf-8") as f:
         f.write("# 📈 三頻共振選股結果\n")
-        # 轉換為台灣時間 (UTC+8) 方便閱讀
         tw_time = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei').strftime('%Y-%m-%d %H:%M:%S')
         f.write(f"更新時間 (台北時間): {tw_time}\n\n")
         if selected_stocks:
