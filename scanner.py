@@ -1,15 +1,11 @@
 import pandas as pd
 import yfinance as yf
-import numpy as np
 
 # 你可以隨時調整這裡的股票代碼
 TICKERS = ["2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "2881.TW"]
 
 # 自訂純 Pandas 計算 MACD 函數
-def calculate_macd(df, fast=12, slow=26, signal=9):
-    # 確保只取 Close 這一欄，避免 MultiIndex 干擾
-    close_series = df['Close'].squeeze()
-    
+def calculate_macd(close_series, fast=12, slow=26, signal=9):
     fast_ema = close_series.ewm(span=fast, adjust=False).mean()
     slow_ema = close_series.ewm(span=slow, adjust=False).mean()
     macd_line = fast_ema - slow_ema
@@ -19,40 +15,48 @@ def calculate_macd(df, fast=12, slow=26, signal=9):
 
 def get_signals(ticker):
     try:
-        # 抓取不同週期的資料 (透過 group_by="ticker" 確保單一股票結構乾淨)
-        df_60m = yf.download(ticker, period="1mo", interval="60m", progress=False, group_by="ticker")
-        df_daily = yf.download(ticker, period="1y", interval="1d", progress=False, group_by="ticker")
-        df_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False, group_by="ticker")
+        # 1. 抓取不同週期的資料 (移除 group_by，確保結構單純)
+        df_60m = yf.download(ticker, period="1mo", interval="60m", progress=False)
+        df_daily = yf.download(ticker, period="1y", interval="1d", progress=False)
+        df_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False)
         
         if df_60m.empty or df_daily.empty or df_weekly.empty:
             return False
 
-        # 1. 計算週線 MACD
-        w_macd, w_signal, w_hist = calculate_macd(df_weekly)
-        # 2. 計算日線 MACD 及 20MA (月線)
-        d_macd, d_signal, d_hist = calculate_macd(df_daily)
-        
-        d_close_series = df_daily['Close'].squeeze()
-        d_ma = d_close_series.rolling(window=20).mean()
-        
-        # 3. 計算 60m MACD
-        m60_macd, m60_signal, m60_hist = calculate_macd(df_60m)
+        # 2. 核心修正：強制將欄位名稱扁平化，只取最底層的標籤 (解決 KeyError: 'Close')
+        if isinstance(df_60m.columns, pd.MultiIndex):
+            df_60m.columns = df_60m.columns.get_level_values(-1)
+        if isinstance(df_daily.columns, pd.MultiIndex):
+            df_daily.columns = df_daily.columns.get_level_values(-1)
+        if isinstance(df_weekly.columns, pd.MultiIndex):
+            df_weekly.columns = df_weekly.columns.get_level_values(-1)
 
-        # --- 轉化為單一純量數值 (避免 Series 歧義錯誤) ---
+        # 3. 提取收盤價 Series 並轉為浮點數序列
+        c_60m = df_60m['Close'].astype(float)
+        c_daily = df_daily['Close'].astype(float)
+        c_weekly = df_weekly['Close'].astype(float)
+
+        # 4. 計算各週期指標
+        w_macd, w_signal, w_hist = calculate_macd(c_weekly)
+        d_macd, d_signal, d_hist = calculate_macd(c_daily)
+        d_ma = c_daily.rolling(window=20).mean()
+        m60_macd, m60_signal, m60_hist = calculate_macd(c_60m)
+
+        # 5. 提取最新與次新資料的單一數值 (純量)
         w_m = float(w_macd.iloc[-1])
         w_s = float(w_signal.iloc[-1])
         w_h = float(w_hist.iloc[-1])
         
         d_m = float(d_macd.iloc[-1])
         d_s = float(d_signal.iloc[-1])
-        d_c = float(d_close_series.iloc[-1])
+        d_c = float(c_daily.iloc[-1])
         d_ma_val = float(d_ma.iloc[-1])
         
         m60_m = float(m60_macd.iloc[-1])
         m60_h = float(m60_hist.iloc[-1])
         m60_h_prev = float(m60_hist.iloc[-2])
 
-        # --- 策略條件判定 ---
+        # 6. 策略條件判定
         # 週線條件：快線 > 慢線 且 柱狀體 > 0
         weekly_bullish = (w_m > w_s) and (w_h > 0)
         
@@ -73,7 +77,7 @@ def get_signals(ticker):
     return False
 
 if __name__ == "__main__":
-    print("🚀 開始執行三頻共振選股策略 (純淨安全版)...")
+    print("🚀 開始執行三頻共振選股策略 (結構優化版)...")
     selected_stocks = []
     
     for ticker in TICKERS:
