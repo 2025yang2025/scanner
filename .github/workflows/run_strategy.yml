@@ -1,0 +1,42 @@
+name: Auto Stock Scanner
+
+# 設定觸發時間
+on:
+  schedule:
+    # 每天一到五，台灣時間下午 3:30 執行 (國際標準時 UTC 是 07:30)
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch: # 允許手動點擊按鈕立即執行
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. 複製 GitHub 儲存庫程式碼到虛擬機
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. 安裝 Python 環境
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    # 3. 安裝必要套件
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas yfinance pandas-ta
+
+    # 4. 執行選股腳本
+    - name: Run Stock Scanner
+      run: python scanner.py
+
+    # 5. 自動將產生的 results.md 提交回你的 GitHub 儲存庫
+    - name: Commit and Push results
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add results.md
+        git commit -m "Auto-update stock selection results" || echo "No changes to commit"
+        git push
