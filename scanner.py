@@ -2,23 +2,29 @@ import pandas as pd
 import yfinance as yf
 import requests
 import os
+from datetime import datetime
 
 # ==============================================================================
-# 🎯 靜態加載：最新台灣 50 成分股名單 (排除美股，純台股標的)
+# 🎯 靜態加載：台灣 50 成分股代碼與中文名稱對照表
 # ==============================================================================
-TICKERS = [
-    "2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "3231.TW", "3711.TW", 
-    "2881.TW", "2882.TW", "2891.TW", "1301.TW", "1303.TW", "2002.TW", "2303.TW", 
-    "2603.TW", "2886.TW", "2884.TW", "5871.TW", "2357.TW", "3034.TW", "2408.TW", 
-    "3035.TW", "3661.TW", "3443.TW", "6415.TW", "2345.TW", "3017.TW", "6230.TW",
-    "2609.TW", "2615.TW", "2324.TW", "2352.TW", "2409.TW", "3481.TW", "6116.TW",
-    "2498.TW", "2353.TW", "2356.TW", "1101.TW", "1402.TW", "2105.TW", "1102.TW",
-    "1216.TW", "2912.TW", "2207.TW", "9904.TW", "2049.TW", "2395.TW", "3045.TW", 
-    "4938.TW"
-]
+STOCK_NAMES = {
+    "1101.TW": "台泥", "1102.TW": "亞泥", "1216.TW": "統一", "1301.TW": "台塑",
+    "1303.TW": "南亞", "1402.TW": "遠東新", "2002.TW": "中鋼", "2049.TW": "上銀",
+    "2105.TW": "正新", "2207.TW": "和泰車", "2303.TW": "聯電", "2308.TW": "台達電",
+    "2317.TW": "鴻海", "2324.TW": "仁寶", "2330.TW": "台積電", "2345.TW": "智邦",
+    "2352.TW": "佳世達", "2353.TW": "宏碁", "2356.TW": "英業達", "2357.TW": "華碩",
+    "2382.TW": "廣達", "2395.TW": "研華", "2408.TW": "南亞科", "2409.TW": "友達",
+    "2454.TW": "聯發科", "2498.TW": "宏達電", "2603.TW": "長榮", "2609.TW": "陽明",
+    "2615.TW": "萬海", "2881.TW": "富邦金", "2882.TW": "國泰金", "2884.TW": "玉山金",
+    "2886.TW": "兆豐金", "2891.TW": "中信金", "2891.TW": "中信金", "2892.TW": "第一金", 
+    "2912.TW": "統一超", "3017.TW": "奇鋐", "3034.TW": "聯詠", "3035.TW": "智原", 
+    "3045.TW": "台灣大", "3231.TW": "緯創", "3443.TW": "創意", "3481.tw": "群創", 
+    "3661.TW": "世芯-KY", "3711.TW": "日月光投控", "4938.TW": "和碩", "5871.TW": "中租-KY", 
+    "6116.TW": "彩晶", "6230.TW": "超微體", "6415.TW": "力旺", "9904.TW": "寶成",
+    "2395.TW": "研華", "3045.TW": "台灣大", "4938.TW": "和碩"
+}
 
-# 確保名單內無重複資料並排序
-TICKERS = sorted(list(set(TICKERS)))
+TICKERS = sorted(list(STOCK_NAMES.keys()))
 
 # ==============================================================================
 # 1. 核心指標計算與資料優化函數
@@ -102,7 +108,6 @@ def get_signals(ticker):
         d_m, d_s, d_c, d_ma_val = float(d_macd.iloc[-1]), float(d_signal.iloc[-1]), float(c_daily.iloc[-1]), float(d_ma.iloc[-1])
         m60_m, m60_h, m60_h_prev = float(m60_macd.iloc[-1]), float(m60_hist.iloc[-1]), float(m60_hist.iloc[-2])
 
-        # --- 策略判定條件 ---
         weekly_bullish = (w_m > w_s) and (w_h > 0)
         daily_bullish = (d_m > 0) and (d_m > d_s)
         daily_above_ma = (d_c > d_ma_val)
@@ -119,6 +124,29 @@ def get_signals(ticker):
 # 4. 主程式
 # ==============================================================================
 if __name__ == "__main__":
+    # 判斷目前時間（台北時間）
+    now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
+    current_hour = now_tw.hour
+
+    # 💡 判斷是否為早上 08:30 開盤前提醒時段 (上午 11 點以前都認定為早晨提醒)
+    if current_hour < 11:
+        print("🌅 偵測到目前為早晨開盤前時段，正在讀取昨日報告存檔...")
+        if os.path.exists("results.md"):
+            with open("results.md", "r", encoding="utf-8") as f:
+                saved_content = f.read()
+            
+            # 將標題替換為開盤前提醒
+            remind_msg = saved_content.replace("# 📊 *三頻共振選股報告 (台灣50精準版)*", "🔔 *【開盤前提醒】三頻共振選股報告*")
+            print("🏁 成功讀取存檔，正在發送開盤前提醒至 Telegram...")
+            send_telegram_message(remind_msg)
+            print("✅ 晨間提醒流程執行完畢！")
+        else:
+            print("⚠️ 找不到 results.md 歷史報告存檔，無法發送晨間提醒。")
+        
+        # 結束程式，早上不重新運算選股
+        exit(0)
+
+    # 📊 下午盤後時段：執行完整的選股運算
     print("🚀 開始執行三頻共振選股策略 (台灣 50 精準版)...")
     print(f"📦 本次預計掃描總標的數: {len(TICKERS)} 檔台灣50權值股。正在進入計算程序...")
 
@@ -128,23 +156,27 @@ if __name__ == "__main__":
             print(f"⏳ 進度通知: 正在掃描第 {idx}/{len(TICKERS)} 檔股票 ({ticker})...")
             
         if get_signals(ticker):
-            print(f"✨ 🎯 發現符合條件標的: {ticker} 🎯 ✨")
+            name_zh = STOCK_NAMES.get(ticker, "")
+            print(f"✨ 🎯 發現符合條件標的: {ticker} ({name_zh}) 🎯 ✨")
             selected_stocks.append(ticker)
             
     # 建立報告訊息
-    tw_time = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei').strftime('%Y-%m-%d %H:%M:%S')
-    tg_msg = f"📊 *三頻共振選股報告 (台灣50精準版)*\n⏰ 時間: {tw_time}\n🔍 總掃描標的數: {len(TICKERS)} 檔\n"
+    tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
+    tg_msg = f"📊 *三頻共振選股報告 (台灣50精準版)*\n⏰ 時間: {tw_time_str}\n🔍 總掃描標的數: {len(TICKERS)} 檔\n"
     
     if selected_stocks:
         tg_msg += "\n🎯 *今日符合條件標的：*\n"
         for stock in selected_stocks:
-            tg_msg += f"• `{stock}`\n"
+            name_zh = STOCK_NAMES.get(stock, "")
+            # 💡 這裡將名稱完美格式化為中文對照（例如：2886.TW (兆豐金)）
+            tg_msg += f"• `{stock}` (*{name_zh}*)\n"
     else:
         tg_msg += "\n今日無符合多週期共振條件的股票。 💤"
         
+    # 寫入 results.md，供隔天早上讀取
     with open("results.md", "w", encoding="utf-8") as f:
         f.write(f"# {tg_msg}")
         
     print("🏁 掃描結束，正在嘗試將報告發送至 Telegram...")
     send_telegram_message(tg_msg)
-    print("✅ 全套流程執行完畢！")
+    print("✅ 下午盤後流程執行完畢！")
