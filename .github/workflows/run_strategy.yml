@@ -2,36 +2,33 @@ name: Auto Stock Scanner
 
 on:
   schedule:
-    # 每天一到五，台灣時間下午 3:30 執行 (UTC 是 07:30)
     - cron: '30 7 * * 1-5'
-  workflow_dispatch: # 允許手動點擊按鈕立即執行
+  workflow_dispatch: 
 
 jobs:
   scan:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. 複製儲存庫程式碼
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 2. 安裝 Python 環境
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    # 3. 安裝必要套件 (純淨版：只安裝 pandas 與 yfinance)
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pandas yfinance
+        pip install pandas yfinance requests
 
-    # 4. 執行選股腳本
     - name: Run Stock Scanner
+      env:
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: python scanner.py
 
-    # 5. 自動將結果提交回 GitHub 儲存庫
     - name: Commit and Push results
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
