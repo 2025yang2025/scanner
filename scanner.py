@@ -4,6 +4,23 @@ import requests
 import os
 
 # ==============================================================================
+# 🎯 靜態加載：最新台灣 50 成分股名單 (排除美股，純台股標的)
+# ==============================================================================
+TICKERS = [
+    "2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "3231.TW", "3711.TW", 
+    "2881.TW", "2882.TW", "2891.TW", "1301.TW", "1303.TW", "2002.TW", "2303.TW", 
+    "2603.TW", "2886.TW", "2884.TW", "5871.TW", "2357.TW", "3034.TW", "2408.TW", 
+    "3035.TW", "3661.TW", "3443.TW", "6415.TW", "2345.TW", "3017.TW", "6230.TW",
+    "2609.TW", "2615.TW", "2324.TW", "2352.TW", "2409.TW", "3481.TW", "6116.TW",
+    "2498.TW", "2353.TW", "2356.TW", "1101.TW", "1402.TW", "2105.TW", "1102.TW",
+    "1216.TW", "2912.TW", "2207.TW", "9904.TW", "2049.TW", "2395.TW", "3045.TW", 
+    "4938.TW"
+]
+
+# 確保名單內無重複資料並排序
+TICKERS = sorted(list(set(TICKERS)))
+
+# ==============================================================================
 # 1. 核心指標計算與資料優化函數
 # ==============================================================================
 def calculate_macd(close_series, fast=12, slow=26, signal=9):
@@ -85,6 +102,7 @@ def get_signals(ticker):
         d_m, d_s, d_c, d_ma_val = float(d_macd.iloc[-1]), float(d_signal.iloc[-1]), float(c_daily.iloc[-1]), float(d_ma.iloc[-1])
         m60_m, m60_h, m60_h_prev = float(m60_macd.iloc[-1]), float(m60_hist.iloc[-1]), float(m60_hist.iloc[-2])
 
+        # --- 策略判定條件 ---
         weekly_bullish = (w_m > w_s) and (w_h > 0)
         daily_bullish = (d_m > 0) and (d_m > d_s)
         daily_above_ma = (d_c > d_ma_val)
@@ -101,32 +119,8 @@ def get_signals(ticker):
 # 4. 主程式
 # ==============================================================================
 if __name__ == "__main__":
-    print("🚀 開始執行三頻共振選股策略 (FinMind 穩定擴大版)...")
-    base_tickers = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD"]
-    tw_tickers = []
-    
-    try:
-        # 💡 改用 FinMind 開放 API 獲取台灣 50 成分股，結構百分之百穩定
-        fm_url = "https://api.finmindapi.com/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=0050"
-        res = requests.get(fm_url).json()
-        
-        if res.get("status") == 200 and "data" in res:
-            # 撈取成分股代號 (排除 0050 自身與現金部位，純留 4 位數股票代碼)
-            stocks = [item["holding_ticker"] for item in res["data"]]
-            tw_tickers = [f"{stock}.TW" for stock in stocks if stock.isdigit() and len(stock) == 4]
-            print("📊 成功透過 FinMind API 獲取最新台灣 50 成分股名單！")
-            
-    except Exception as e:
-        print(f"⚠️ 自動獲取台灣50名單失敗，原因: {e}")
-        
-    # 如果 API 異常，倒回備用清單
-    if not tw_tickers:
-        print("倒回備用台股清單...")
-        tw_tickers = ["2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "2881.TW"]
-
-    # 合併清單並去重
-    TICKERS = list(set(base_tickers + tw_tickers))
-    print(f"📦 本次預計掃描總標的數: {len(TICKERS)} 檔。正在進入計算程序...")
+    print("🚀 開始執行三頻共振選股策略 (台灣 50 精準版)...")
+    print(f"📦 本次預計掃描總標的數: {len(TICKERS)} 檔台灣50權值股。正在進入計算程序...")
 
     selected_stocks = []
     for idx, ticker in enumerate(TICKERS, 1):
@@ -139,7 +133,7 @@ if __name__ == "__main__":
             
     # 建立報告訊息
     tw_time = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei').strftime('%Y-%m-%d %H:%M:%S')
-    tg_msg = f"📊 *三頻共振選股報告 (擴大掃描版)*\n⏰ 時間: {tw_time}\n🔍 總掃描標的數: {len(TICKERS)} 檔\n"
+    tg_msg = f"📊 *三頻共振選股報告 (台灣50精準版)*\n⏰ 時間: {tw_time}\n🔍 總掃描標的數: {len(TICKERS)} 檔\n"
     
     if selected_stocks:
         tg_msg += "\n🎯 *今日符合條件標的：*\n"
