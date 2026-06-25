@@ -7,7 +7,6 @@ import os
 # 1. 核心指標計算與資料優化函數
 # ==============================================================================
 def calculate_macd(close_series, fast=12, slow=26, signal=9):
-    """自訂純 Pandas 計算 MACD 函數"""
     fast_ema = close_series.ewm(span=fast, adjust=False).mean()
     slow_ema = close_series.ewm(span=slow, adjust=False).mean()
     macd_line = fast_ema - slow_ema
@@ -16,7 +15,6 @@ def calculate_macd(close_series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, hist
 
 def extract_close_series(df):
-    """終極提取 Close 欄位函數"""
     if df.empty:
         return pd.Series(dtype=float)
     if isinstance(df.columns, pd.MultiIndex):
@@ -35,7 +33,6 @@ def extract_close_series(df):
 # 2. Telegram 訊息發送功能
 # ==============================================================================
 def send_telegram_message(message):
-    """透過 GitHub Secrets 傳送 Telegram 訊息 (防呆加強版)"""
     bot_token = os.environ.get("TG_BOT_TOKEN")
     chat_id = os.environ.get("TG_CHAT_ID")
     
@@ -68,7 +65,6 @@ def send_telegram_message(message):
 # ==============================================================================
 def get_signals(ticker):
     try:
-        # 抓取資料
         df_60m = yf.download(ticker, period="1mo", interval="60m", progress=False)
         df_daily = yf.download(ticker, period="1y", interval="1d", progress=False)
         df_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False)
@@ -80,7 +76,6 @@ def get_signals(ticker):
         if c_60m.empty or c_daily.empty or c_weekly.empty:
             return False
 
-        # 指標計算
         w_macd, w_signal, w_hist = calculate_macd(c_weekly)
         d_macd, d_signal, d_hist = calculate_macd(c_daily)
         d_ma = c_daily.rolling(window=20).mean()
@@ -90,7 +85,6 @@ def get_signals(ticker):
         d_m, d_s, d_c, d_ma_val = float(d_macd.iloc[-1]), float(d_signal.iloc[-1]), float(c_daily.iloc[-1]), float(d_ma.iloc[-1])
         m60_m, m60_h, m60_h_prev = float(m60_macd.iloc[-1]), float(m60_hist.iloc[-1]), float(m60_hist.iloc[-2])
 
-        # 條件判定
         weekly_bullish = (w_m > w_s) and (w_h > 0)
         daily_bullish = (d_m > 0) and (d_m > d_s)
         daily_above_ma = (d_c > d_ma_val)
@@ -100,49 +94,42 @@ def get_signals(ticker):
             return True
             
     except Exception as e:
-        print(f" ❌ 計算 {ticker} 時發生邏輯錯誤: {e}")
+        pass
     return False
 
 # ==============================================================================
 # 4. 主程式
 # ==============================================================================
 if __name__ == "__main__":
-    print("🚀 開始執行三頻共振選股策略 (動態擴大診斷版)...")
+    print("🚀 開始執行三頻共振選股策略 (FinMind 穩定擴大版)...")
     base_tickers = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD"]
-    TICKERS = []
+    tw_tickers = []
     
     try:
-        # 💡 加上 User-Agent 偽裝成一般瀏覽器，防止被維基百科阻擋
-        url = "https://zh.wikipedia.org/wiki/%E8%87%BA%E7%81%A350%E6%8C%87%E6%95%B8"
-        req = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        tables = pd.read_html(req.text)
+        # 💡 改用 FinMind 開放 API 獲取台灣 50 成分股，結構百分之百穩定
+        fm_url = "https://api.finmindapi.com/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=0050"
+        res = requests.get(fm_url).json()
         
-        # 遞迴檢查維基百科裡面的所有表格，看哪一個包含台灣股票代號
-        tw_stocks = []
-        for i, table in enumerate(tables):
-            code_cols = [col for col in table.columns if '代號' in str(col) or '編號' in str(col)]
-            if code_cols:
-                col_name = code_cols[0]
-                tw_stocks = table[col_name].astype(str).str.strip().tolist()
-                print(f"📊 成功在維基百科第 {i} 個表格找到成分股名單！")
-                break
-                
-        tw_tickers = [f"{stock}.TW" for stock in tw_stocks if stock.isdigit()]
-        TICKERS = list(set(base_tickers + tw_tickers))
-        
+        if res.get("status") == 200 and "data" in res:
+            # 撈取成分股代號 (排除 0050 自身與現金部位，純留 4 位數股票代碼)
+            stocks = [item["holding_ticker"] for item in res["data"]]
+            tw_tickers = [f"{stock}.TW" for stock in stocks if stock.isdigit() and len(stock) == 4]
+            print("📊 成功透過 FinMind API 獲取最新台灣 50 成分股名單！")
+            
     except Exception as e:
         print(f"⚠️ 自動獲取台灣50名單失敗，原因: {e}")
         
-    # 如果上面爬蟲失敗，確保有名單可以用
-    if not TICKERS:
-        print("倒回預設核心股票清單...")
-        TICKERS = ["2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "2881.TW"] + base_tickers
+    # 如果 API 異常，倒回備用清單
+    if not tw_tickers:
+        print("倒回備用台股清單...")
+        tw_tickers = ["2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "2881.TW"]
 
+    # 合併清單並去重
+    TICKERS = list(set(base_tickers + tw_tickers))
     print(f"📦 本次預計掃描總標的數: {len(TICKERS)} 檔。正在進入計算程序...")
 
     selected_stocks = []
     for idx, ticker in enumerate(TICKERS, 1):
-        # 每計算 10 檔就印一次進度，讓你知道程式沒死掉
         if idx % 10 == 0 or idx == len(TICKERS):
             print(f"⏳ 進度通知: 正在掃描第 {idx}/{len(TICKERS)} 檔股票 ({ticker})...")
             
