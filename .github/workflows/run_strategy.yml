@@ -2,8 +2,10 @@ name: Auto Stock Scanner
 
 on:
   schedule:
-    # 每天一到五，台灣時間下午 3:30 執行 (UTC 是 07:30)
+    # 1. 每天一到五 台灣下午 15:30 執行選股與發送報告 (UTC 時間為 07:30)
     - cron: '30 7 * * 1-5'
+    # 2. 每天一到五 台灣早上 08:30 再次發送開盤前提醒 (UTC 時間為 00:30)
+    - cron: '30 0 * * 1-5'
   workflow_dispatch: # 允許手動點擊按鈕立即執行
 
 jobs:
@@ -21,20 +23,20 @@ jobs:
       with:
         python-version: '3.10'
 
-    # 3. 安裝必要套件 (補上 lxml 解決網頁解析問題)
+    # 3. 安裝必要套件
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install pandas yfinance requests lxml
 
-    # 4. 執行選股腳本
+    # 4. 執行選股腳本 (自動根據時間判斷要選股還是要發提醒)
     - name: Run Stock Scanner
       env:
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: python scanner.py
 
-    # 5. 自動將結果提交回 GitHub 儲存庫
+    # 5. 自動將結果提交回 GitHub 儲存庫 (確保 results.md 被更新)
     - name: Commit and Push results
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
