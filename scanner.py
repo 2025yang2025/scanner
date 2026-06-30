@@ -6,68 +6,105 @@ import time
 import random
 
 # ==============================================================================
-# 🌐 全自動動態獲取：全台灣市場（上市＋上櫃）所有股票代號總表
+# 🇺🇸 鎖定美股 AI 與科技核心權值股名單（進行精準財報健檢）
+# ==============================================================================
+US_TARGETS = [
+    "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD", "AVGO", "TSM", "SMCI", "ASML", "QCOM"
+]
+
+# 全域字典：用來動態儲存全台股 1800+ 檔最新的【代號: 中文名稱】對照表
+DYNAMIC_STOCK_NAMES = {}
+
+# ==============================================================================
+# 🌐 台股全市場標的與【中文名稱】動態獲取
 # ==============================================================================
 def fetch_all_taiwan_market_tickers():
-    """動態抓取台灣市場所有上市與上櫃的 4 位數股票代號 (約 1800+ 檔)"""
+    """動態抓取台灣市場所有上市股票代號與中文名稱 (一次打包，不傷伺服器)"""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     all_tickers = []
-    
-    # 管道一：證交所全市場每日收盤行情快照 (一次打包所有代碼，完全不傷伺服器)
     try:
-        print("🌐 正在從證交所/櫃買中心初始化全市場股票代碼資料庫...")
-        # 上市股票清單 API
+        print("🌐 正在從證交所初始化全市場股票代碼與【中文名稱】資料庫...")
+        # 讀取證交所全市場每日收盤行情快照 API
         url_twse = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         res = requests.get(url_twse, headers=headers, timeout=10)
+        
         if res.status_code == 200:
             for item in res.json():
                 code = item.get("Code", "").strip()
+                name = item.get("Name", "").strip()  # 💡 抓取官方中文名稱
+                
                 if code.isdigit() and len(code) == 4:
-                    all_tickers.append(f"{code}.TW")
+                    ticker_id = f"{code}.TW"
+                    all_tickers.append(ticker_id)
+                    DYNAMIC_STOCK_NAMES[ticker_id] = name  # 💡 自動寫入全域字典
+                    
+            print(f"✅ 成功動態載入 {len(all_tickers)} 檔台股中文對照表！")
     except Exception as e:
-        print(f"⚠️ 抓取上市代碼略有波動: {e}")
-
-    # 保底機制：如果官方 API 波動，為了確保程式 100% 執行，塞入台灣50與核心中小型飆股種子
+        print(f"⚠️ 抓取上市代碼與名稱時發生波動: {e}")
+        
+    # 保底機制：萬一證交所 API 斷線，提供核心股票名稱確保不崩潰
     if not all_tickers:
         print("🚨 啟用種子標的群組保底...")
-        all_tickers = [
-            "2330.TW", "2317.TW", "2454.TW", "2308.TW", "2382.TW", "3231.TW", "3017.TW",
-            "3443.TW", "3661.TW", "6415.TW", "2303.TW", "2603.TW", "2881.TW", "2882.TW"
-        ]
-    
-    all_tickers = sorted(list(set(all_tickers)))
-    return all_tickers
+        backup_dict = {"2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科", "2382.TW": "廣達", "3017.TW": "奇鋐"}
+        for k, v in backup_dict.items():
+            all_tickers.append(k)
+            DYNAMIC_STOCK_NAMES[k] = v
+            
+    return sorted(list(set(all_tickers)))
 
-# ==============================================================================
-# 📊 全市場基本面漏斗 (一次性下載，徹底避免被誤認攻擊)
-# ==============================================================================
 def fetch_fundamental_snapshot(tickers):
-    """
-    【高階架構】直接下載全市場基本面清單，避免一檔一檔爬
-    回傳：符合策略二、策略三基本面門檻的精選代碼清單
-    """
-    print("📊 正在下載全市場營收與財報大數據進行第一階段『基本面漏斗』篩選...")
-    
-    # 實務上在 Actions 為了速度與網路絕對防禦，我們將全市場標的進行高效率的分流
-    # 這裡我們自動放行基本面極佳的高成長產業群（AI 伺服器、半導體設備、高階散熱群）進入技術面精細分批檢驗
+    """基本面/特定高科技產業群初審濾網"""
     strat2_candidates = []
     strat3_candidates = []
-    
-    # 動態分流：將台灣 50 以及全市場中具有高波動、高科技權重的標的直接送入精細篩選
-    # 這樣既有全市場的廣度，又能把 yfinance 的總連線數控制在 60 檔以內，速度極快且絕不被鎖
     for tk in tickers:
         pure_code = tk.split('.')[0]
-        # 範例過濾：優先挑選電子、半導體、高精密製造等具備 AI 與高定價權潛力的代碼群
+        # 篩選電子、半導體、高精密製造等核心飆股族群
         if pure_code.startswith(('23', '24', '30', '32', '34', '35', '36', '37', '61', '62', '64', '80')):
             strat2_candidates.append(tk)
-            # 極高技術壁壘種子（IC設計與先進封裝設備高毛利群）
+            # 極高技術壁壘龍頭種子
             if pure_code in ['2330', '2454', '3443', '3661', '6415', '3017', '3533', '6187']:
                 strat3_candidates.append(tk)
-                
     return strat2_candidates, strat3_candidates
 
 # ==============================================================================
-# 📈 技術面計算（三頻共振判斷，內建「分批延遲機制」）
+# 📊 美股核心財報健檢核心引擎
+# ==============================================================================
+def inspect_us_earnings(ticker_symbol):
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        q_financials = ticker.quarterly_financials
+        
+        if q_financials.empty or q_financials.shape[1] < 2:
+            return f"• `{ticker_symbol}`: ⚠️ 暫無足夠季度財報數據"
+        
+        revenue_row = [idx for idx in q_financials.index if 'Total Revenue' in str(idx) or 'Revenue' in str(idx)]
+        net_income_row = [idx for idx in q_financials.index if 'Net Income' in str(idx)]
+        
+        if not revenue_row or not net_income_row:
+            return f"• `{ticker_symbol}`: ⚠️ 財報欄位解析受阻"
+            
+        rev_series = q_financials.loc[revenue_row[0]]
+        net_series = q_financials.loc[net_income_row[0]]
+        
+        rev_latest = float(rev_series.iloc[0])
+        rev_prev = float(rev_series.iloc[1])
+        net_latest = float(net_series.iloc[0])
+        net_prev = float(net_series.iloc[1])
+        
+        rev_qoq = ((rev_latest - rev_prev) / rev_prev) * 100 if rev_prev != 0 else 0
+        net_qoq = ((net_latest - net_prev) / net_prev) * 100 if net_prev != 0 else 0
+        
+        rev_status = "📈 增長" if rev_qoq >= 0 else "📉 衰退"
+        net_status = "🟢 獲利擴大" if net_qoq >= 0 else "🔴 獲利縮水"
+        if net_latest < 0: net_status = "🚨 虧損"
+        
+        rev_billion = rev_latest / 1e9
+        return f"• `{ticker_symbol}`: 營收 `{rev_billion:.1f}B` ({rev_status} `{rev_qoq:+.1f}%` QoQ) | 淨利 ({net_status} `{net_qoq:+.1f}%` QoQ)"
+    except Exception:
+        return f"• `{ticker_symbol}`: ❌ 財報健檢執行異常"
+
+# ==============================================================================
+# 📈 技術面計算（台股三頻共振）
 # ==============================================================================
 def calculate_macd(close_series, fast=12, slow=26, signal=9):
     fast_ema = close_series.ewm(span=fast, adjust=False).mean()
@@ -84,13 +121,9 @@ def extract_close_series(df):
         if 'Close' in df.columns.get_level_values(1): return df.xs('Close', axis=1, level=1).squeeze().astype(float)
     for col in df.columns:
         if str(col).strip().lower() == 'close': return df[col].squeeze().astype(float)
-    if df.shape[1] >= 4: return df.iloc[:, 3].squeeze().astype(float)
     return pd.Series(dtype=float)
 
 def check_technical_resonance(ticker):
-    """
-    判斷個股是否符合：週線多頭、日線月線上多頭、60m剛好金叉翻正
-    """
     try:
         df_60m = yf.download(ticker, period="1mo", interval="60m", progress=False)
         df_daily = yf.download(ticker, period="1y", interval="1d", progress=False)
@@ -106,6 +139,8 @@ def check_technical_resonance(ticker):
         d_macd, d_signal, d_hist = calculate_macd(c_daily)
         d_ma = c_daily.rolling(window=20).mean()
         m60_macd, m60_signal, m60_hist = calculate_macd(c_60m)
+
+        if len(w_hist) < 1 or len(d_hist) < 1 or len(m60_hist) < 2: return False
 
         w_m, w_s, w_h = float(w_macd.iloc[-1]), float(w_signal.iloc[-1]), float(w_hist.iloc[-1])
         d_m, d_s, d_c, d_ma_val = float(d_macd.iloc[-1]), float(d_signal.iloc[-1]), float(c_daily.iloc[-1]), float(d_ma.iloc[-1])
@@ -123,7 +158,7 @@ def check_technical_resonance(ticker):
     return False
 
 # ==============================================================================
-# 💬 Telegram 訊息發送功能
+# 💬 Telegram 發送
 # ==============================================================================
 def send_telegram_message(message):
     bot_token = os.environ.get("TG_BOT_TOKEN")
@@ -140,7 +175,7 @@ def send_telegram_message(message):
     except Exception as e: print(f"發送 TG 異常: {e}")
 
 # ==============================================================================
-# 🚀 主程式：全市場跨維度分批安全掃描
+# 🚀 主程式：跨國市場聯合大掃描
 # ==============================================================================
 if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
@@ -151,78 +186,71 @@ if __name__ == "__main__":
         if os.path.exists("results.md"):
             with open("results.md", "r", encoding="utf-8") as f:
                 saved_content = f.read()
-            remind_msg = saved_content.replace("# 📊 *全市場跨維度選股報告*", "🔔 *【開盤前提醒】全市場選股報告*")
+            remind_msg = saved_content.replace("# 📊 *全球雙市場跨維度選股與財報報告*", "🔔 *【開盤前提醒】全球雙市場選股報告*")
             send_telegram_message(remind_msg)
             print("✅ 晨間提醒流程執行完畢！")
         exit(0)
 
-    # 📊 下午盤後時段：執行全市場漏斗分批安全掃描
-    print("🚀 啟動【全市場跨維度選股系統】安全分批防禦版...")
+    # 📊 下午盤後時段：台股策略選股 + 美股核心財報健檢
+    print("🚀 啟動【全球雙市場跨維度選股與財報系統】...")
     
-    # 1. 抓取全市場總清單
-    ALL_MARKET_TICKERS = fetch_all_taiwan_50_or_all() if 'fetch_all_taiwan_50_or_all' in globals() else fetch_all_taiwan_market_tickers()
-    print(f"📦 成功動態載入全台灣市場標的，總計: {len(ALL_MARKET_TICKERS)} 檔個股。")
-    
-    # 2. 通過基本面大快照篩選候選人，避免 yfinance 掃描過多標的
+    # --- Part 1: 台股全市場與中文名稱加載 ---
+    ALL_MARKET_TICKERS = fetch_all_taiwan_market_tickers()
     strat2_candidates, strat3_candidates = fetch_fundamental_snapshot(ALL_MARKET_TICKERS)
-    
-    # 我們合併所有要進行 K 線技術分析的精選清單 (去重複)
     tech_scan_pool = sorted(list(set(strat2_candidates + strat3_candidates)))
-    print(f"⚡ 第一階段過濾完成！精選出 {len(tech_scan_pool)} 檔核心成長產業股進行 K 線多週期共振分析。")
-    print(f"🛡️ 已將 yfinance 總請求數自 1800+ 檔降低至 {len(tech_scan_pool)} 檔，大幅降低 95% 網站防禦觸發率！")
+    
+    strat1_matches = []
+    strat2_matches = []
+    strat3_matches = []
 
-    strat1_matches = []  # 原版純技術面三頻共振
-    strat2_matches = []  # 策略二：獲利暴增型
-    strat3_matches = []  # 策略三：高技術壁壘龍頭型
-
-    # 3. 進入迴圈：分批、防攻擊下載
+    print(f"⏳ 正在進行台股技術面安全分批掃描 (共 {len(tech_scan_pool)} 檔)...")
     for idx, ticker in enumerate(tech_scan_pool, 1):
-        
-        # 💡 【核心安全機制】每下載 15 檔股票，就強制讓程式隨機休息 2 ~ 4 秒，模擬真人行為
         if idx % 15 == 0:
-            sleep_time = random.uniform(2.0, 4.0)
-            print(f"🛡️ [安全防禦] 已連續下載 {idx} 檔，程式隨機休眠 {sleep_time:.2f} 秒以防止網站阻擋...")
-            time.sleep(sleep_time)
+            time.sleep(random.uniform(2.0, 3.5))
             
-        if idx % 10 == 0 or idx == len(tech_scan_pool):
-            print(f"⏳ 進度通知: 正在精細分析第 {idx}/{len(tech_scan_pool)} 檔股票 ({ticker})...")
-            
-        # 執行技術面三頻共振檢查
         if check_technical_resonance(ticker):
-            stock_label = f"`{ticker}`"
+            # 💡 從動態字典中自動查詢最新中文名稱，若查不到則顯示空值
+            name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
+            stock_label = f"`{ticker}` (*{name_zh}*)" if name_zh else f"`{ticker}`"
             
             strat1_matches.append(stock_label)
-            if ticker in strat2_candidates:
-                strat2_matches.append(stock_label)
-            if ticker in strat3_candidates:
-                strat3_matches.append(stock_label)
-            
-    # 📝 格式化三大策略選股報告
+            if ticker in strat2_candidates: strat2_matches.append(stock_label)
+            if ticker in strat3_candidates: strat3_matches.append(stock_label)
+
+    # --- Part 2: 美股核心財報健檢 ---
+    print("⏳ 正在下載美股核心科技股最新季度財報進行動態健檢...")
+    us_reports = []
+    for us_tk in US_TARGETS:
+        report_line = inspect_us_earnings(us_tk)
+        us_reports.append(report_line)
+        time.sleep(1.5)
+
+    # 📝 格式化全球雙市場綜合報告
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
-    tg_msg = f"# 📊 *全市場跨維度選股報告*\n⏰ 執行時間: {tw_time_str}\n🔍 全市場總母體: {len(ALL_MARKET_TICKERS)} 檔 ➡️ 技術面安全分批掃描: {len(tech_scan_pool)} 檔\n"
+    tg_msg = f"# 📊 *全球雙市場跨維度選股與財報報告*\n⏰ 執行時間: {tw_time_str}\n"
     tg_msg += "---"
     
-    tg_msg += "\n\n📈 *【策略一：原版多週期三頻共振】*\n"
-    if strat1_matches:
-        tg_msg += "• 符合標的：" + ", ".join(strat1_matches) + "\n"
-    else:
-        tg_msg += "• 今日無符合標的。 💤\n"
+    # 🇺🇸 美股專區
+    tg_msg += "\n\n🇺🇸 *【美股核心巨頭財報動態健檢】*\n"
+    tg_msg += "↳ *指標意義*：檢視最新單季營收規模、QoQ 增長/衰退及淨利增減。\n"
+    for r in us_reports:
+        tg_msg += f"{r}\n"
+        
+    tg_msg += "---"
+    
+    # 🇹🇼 台股專區 (格式完美支援中文名稱)
+    tg_msg += "\n\n📈 *【台股策略一：原版多週期三頻共振】*\n"
+    tg_msg += "• 符合標的：" + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n"
 
-    tg_msg += "\n🚀 *【策略二：獲利暴增 × 產業轉折爆發股】*\n"
-    if strat2_matches:
-        tg_msg += "• 符合標的：" + ", ".join(strat2_matches) + "\n"
-    else:
-        tg_msg += "• 今日無符合標的。 💤\n"
+    tg_msg += "\n🚀 *【台股策略二：獲利暴增 × 產業轉折爆發股】*\n"
+    tg_msg += "• 符合標的：" + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的. 💤") + "\n"
 
-    tg_msg += "\n💎 *【策略三：高技術壁壘 × 抗震核心存股龍頭】*\n"
-    if strat3_matches:
-        tg_msg += "• 符合標的：" + ", ".join(strat3_matches) + "\n"
-    else:
-        tg_msg += "• 今日無符合標的。 💤\n"
+    tg_msg += "\n💎 *【台股策略三：高技術壁壘 × 抗震核心存股龍頭】*\n"
+    tg_msg += "• 符合標的：" + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n"
 
+    # 儲存與發送
     with open("results.md", "w", encoding="utf-8") as f:
         f.write(tg_msg)
         
-    print("🏁 掃描結束，正在嘗試將全新報告發送至 Telegram...")
     send_telegram_message(tg_msg)
-    print("✅ 全市場全自動安全選股流程順利完成！")
+    print("✅ 全球雙市場全自動安全掃描流程（含台股中文名稱）順利完成！")
