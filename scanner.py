@@ -6,100 +6,7 @@ import time
 import random
 
 # ==============================================================================
-# 🌐 【美股全自動動態獲取】標普 500 + 納斯達克 100 成分股總表
-# ==============================================================================
-def fetch_all_us_market_tickers():
-    us_tickers = set()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    try:
-        print("🌐 正在初始化全美核心成分股資料庫 (S&P 500 & Nasdaq 100)...")
-        # 抓取 S&P 500
-        url_sp500 = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url_sp500)
-        sp500_df = tables[0]
-        for sym in sp500_df['Symbol'].tolist():
-            sym = str(sym).replace('.', '-')
-            if sym.isalpha(): us_tickers.add(sym)
-            
-        # 抓取 Nasdaq 100
-        url_ndx = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        tables_ndx = pd.read_html(url_ndx)
-        for table in tables_ndx:
-            if 'Ticker' in table.columns:
-                for sym in table['Ticker'].tolist():
-                    sym = str(sym).replace('.', '-')
-                    if sym.isalpha(): us_tickers.add(sym)
-                    
-        print(f"✅ 成功動態載入全美 {len(us_tickers)} 檔核心大型股代碼！")
-    except Exception as e:
-        print(f"⚠️ 抓取美股代碼時發生波動: {e}")
-        return ["NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD", "AVGO", "TSM", "QCOM"]
-        
-    return sorted(list(us_tickers))
-
-# ==============================================================================
-# 📊 【美股財報雙增長過濾】暨【美股中文名稱自動轉換】引擎
-# ==============================================================================
-def inspect_us_earnings_filter(ticker_symbol):
-    """
-    動態下載財報，【只回傳】營收與淨利雙雙成長(QoQ > 0)的精選股，並自動加上中文名稱
-    """
-    # 💡 建立美股核心巨頭中文對照表（其餘無對照的股票會自動改抓 yfinance 官方長名稱）
-    us_chinese_names = {
-        "NVDA": "輝達", "AAPL": "蘋果", "MSFT": "微軟", "AMZN": "亞馬遜", 
-        "META": "臉書", "GOOGL": "谷歌", "GOOG": "谷歌", "AMD": "超微", 
-        "AVGO": "博通", "TSM": "台積電ADR", "SMCI": "美超微", "ASML": "艾司摩爾", 
-        "QCOM": "高通", "MU": "美光", "INTC": "英特爾", "NFLX": "網飛", "TSLA": "特斯拉"
-    }
-
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        q_financials = ticker.quarterly_financials
-        
-        if q_financials.empty or q_financials.shape[1] < 2:
-            return None
-        
-        revenue_row = [idx for idx in q_financials.index if 'Total Revenue' in str(idx) or 'Revenue' in str(idx)]
-        net_income_row = [idx for idx in q_financials.index if 'Net Income' in str(idx)]
-        
-        if not revenue_row or not net_income_row:
-            return None
-            
-        rev_series = q_financials.loc[revenue_row[0]]
-        net_series = q_financials.loc[net_income_row[0]]
-        
-        rev_latest = float(rev_series.iloc[0])
-        rev_prev = float(rev_series.iloc[1])
-        net_latest = float(net_series.iloc[0])
-        net_prev = float(net_series.iloc[1])
-        
-        # 計算季增率 QoQ
-        rev_qoq = ((rev_latest - rev_prev) / rev_prev) * 100 if rev_prev != 0 else 0
-        net_qoq = ((net_latest - net_prev) / net_prev) * 100 if net_prev != 0 else 0
-        
-        # 💡 【核心篩選門檻】：必須營收與淨利雙雙大於 0% 
-        if rev_qoq > 0 and net_qoq > 0 and net_latest > 0:
-            rev_billion = rev_latest / 1e9
-            
-            # 💡 自動獲取美股中文/英文名稱機制
-            if ticker_symbol in us_chinese_names:
-                us_name_zh = us_chinese_names[ticker_symbol]
-            else:
-                try:
-                    # 若不在預設字典，自動動態跟 yfinance 要該公司的官方精簡縮寫名稱
-                    us_name_zh = ticker.info.get('shortName', ticker_symbol)
-                except Exception:
-                    us_name_zh = ""
-            
-            name_label = f" (*{us_name_zh}*)" if us_name_zh else ""
-            return f"• `{ticker_symbol}`{name_label}: 營收 `{rev_billion:.1f}B` (📈 `{rev_qoq:+.1f}%` QoQ) | 淨利 (🟢 `{net_qoq:+.1f}%` QoQ)"
-            
-    except Exception:
-        pass
-    return None
-
-# ==============================================================================
-# 🇹🇼 台股全市場與技術面模組 (保持全自動含中文功能)
+# 🇹🇼 台股全市場全自動動態獲取
 # ==============================================================================
 DYNAMIC_STOCK_NAMES = {}
 
@@ -137,6 +44,9 @@ def fetch_fundamental_snapshot(tickers):
                 strat3_candidates.append(tk)
     return strat2_candidates, strat3_candidates
 
+# ==============================================================================
+# 📈 數學指標計算核心 (MACD & KD)
+# ==============================================================================
 def calculate_macd(close_series, fast=12, slow=26, signal=9):
     fast_ema = close_series.ewm(span=fast, adjust=False).mean()
     slow_ema = close_series.ewm(span=slow, adjust=False).mean()
@@ -145,45 +55,107 @@ def calculate_macd(close_series, fast=12, slow=26, signal=9):
     hist = macd_line - signal_line
     return macd_line, signal_line, hist
 
-def extract_close_series(df):
-    if df.empty: return pd.Series(dtype=float)
-    if isinstance(df.columns, pd.MultiIndex):
-        if 'Close' in df.columns.get_level_values(0): return df.xs('Close', axis=1, level=0).squeeze().astype(float)
-        if 'Close' in df.columns.get_level_values(1): return df.xs('Close', axis=1, level=1).squeeze().astype(float)
-    for col in df.columns:
-        if str(col).strip().lower() == 'close': return df[col].squeeze().astype(float)
-    return pd.Series(dtype=float)
+def calculate_kd(df, n=9, m1=3, m2=3):
+    """
+    計算標準 KD 指標
+    """
+    high_n = df['High'].rolling(window=n).max()
+    low_n = df['Low'].rolling(window=n).min()
+    close = df['Close']
+    
+    # 計算 RSV (未成熟隨機值)
+    rsv = (close - low_n) / (high_n - low_n) * 100
+    rsv = rsv.fillna(50) # 補缺值避免初期崩潰
+    
+    k_list, d_list = [], []
+    current_k, current_d = 50.0, 50.0 # 初始值設定為 50
+    
+    for r in rsv:
+        current_k = (1/m1) * r + ((m1-1)/m1) * current_k
+        current_d = (1/m2) * current_k + ((m2-1)/m2) * current_d
+        k_list.append(current_k)
+        d_list.append(current_d)
+        
+    return pd.Series(k_list, index=df.index), pd.Series(d_list, index=df.index)
 
+def extract_ohlc_df(df):
+    """
+    安全提取多重索引 (MultiIndex) 的 OHLC 資料
+    """
+    if df.empty: return pd.DataFrame()
+    new_df = pd.DataFrame(index=df.index)
+    
+    # 處理 yfinance 多重索引欄位
+    if isinstance(df.columns, pd.MultiIndex):
+        for col in ['Open', 'High', 'Low', 'Close']:
+            if col in df.columns.get_level_values(0):
+                new_df[col] = df.xs(col, axis=1, level=0).squeeze().astype(float)
+            elif col in df.columns.get_level_values(1):
+                new_df[col] = df.xs(col, axis=1, level=1).squeeze().astype(float)
+    else:
+        for col in ['Open', 'High', 'Low', 'Close']:
+            col_match = [c for c in df.columns if str(c).strip().lower() == col.lower()]
+            if col_match:
+                new_df[col] = df[col_match[0]].squeeze().astype(float)
+                
+    return new_df
+
+# ==============================================================================
+# 🎯 新·多週期技術共振過濾引擎 (MACD 翻正 + KD 低檔金叉)
+# ==============================================================================
 def check_technical_resonance(ticker):
     try:
-        df_60m = yf.download(ticker, period="1mo", interval="60m", progress=False)
-        df_daily = yf.download(ticker, period="1y", interval="1d", progress=False)
-        df_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False)
+        # 下載 60分、日、週三個週期的歷史數據
+        raw_60m = yf.download(ticker, period="1mo", interval="60m", progress=False)
+        raw_daily = yf.download(ticker, period="1y", interval="1d", progress=False)
+        raw_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False)
         
-        c_60m = extract_close_series(df_60m)
-        c_daily = extract_close_series(df_daily)
-        c_weekly = extract_close_series(df_weekly)
+        df_60m = extract_ohlc_df(raw_60m)
+        df_daily = extract_ohlc_df(raw_daily)
+        df_weekly = extract_ohlc_df(raw_weekly)
         
-        if c_60m.empty or c_daily.empty or c_weekly.empty: return False
+        if df_60m.empty or df_daily.empty or df_weekly.empty: return False
 
-        w_macd, w_signal, w_hist = calculate_macd(c_weekly)
-        d_macd, d_signal, d_hist = calculate_macd(c_daily)
-        d_ma = c_daily.rolling(window=20).mean()
-        m60_macd, m60_signal, m60_hist = calculate_macd(c_60m)
+        # --- 1. 計算 MACD 柱狀體 (Hist) ---
+        _, _, m60_hist = calculate_macd(df_60m['Close'])
+        _, _, d_hist = calculate_macd(df_daily['Close'])
+        _, _, w_hist = calculate_macd(df_weekly['Close'])
+        
+        if len(m60_hist) < 2 or len(d_hist) < 2 or len(w_hist) < 2: return False
+        
+        # 判斷 MACD 是否「往 0 軸翻正」（最新一根 > 0 且 前一根 <= 0）
+        m60_macd_turn_up = (m60_hist.iloc[-1] > 0) and (m60_hist.iloc[-2] <= 0)
+        daily_macd_turn_up = (d_hist.iloc[-1] > 0) and (d_hist.iloc[-2] <= 0)
+        weekly_macd_turn_up = (w_hist.iloc[-1] > 0) and (w_hist.iloc[-2] <= 0)
+        
+        # 三週期 MACD 必須同時在翻正起漲點
+        macd_resonance = m60_macd_turn_up and daily_macd_turn_up and weekly_macd_turn_up
 
-        if len(w_hist) < 1 or len(d_hist) < 1 or len(m60_hist) < 2: return False
+        # --- 2. 計算 KD 指標並判定低檔黃金交叉 ---
+        k_60m, d_60m = calculate_kd(df_60m)
+        k_daily, d_daily = calculate_kd(df_daily)
+        k_weekly, d_weekly = calculate_kd(df_weekly)
+        
+        def is_low_kd_golden_cross(k_ser, d_ser, threshold=30):
+            """ 判定 KD 是否在低檔 (<=30) 發生黃金交叉 """
+            if len(k_ser) < 2: return False
+            # 最新一根 K > D，前一根 K <= D (黃金交叉)
+            cross_up = (k_ser.iloc[-1] > d_ser.iloc[-1]) and (k_ser.iloc[-2] <= d_ser.iloc[-2])
+            # 交叉時的數值落於低檔起漲區 (K 值與 D 值皆小於等於指定門檻)
+            is_low_level = (k_ser.iloc[-1] <= threshold) or (d_ser.iloc[-1] <= threshold)
+            return cross_up and is_low_level
 
-        w_m, w_s, w_h = float(w_macd.iloc[-1]), float(w_signal.iloc[-1]), float(w_hist.iloc[-1])
-        d_m, d_s, d_c, d_ma_val = float(d_macd.iloc[-1]), float(d_signal.iloc[-1]), float(c_daily.iloc[-1]), float(d_ma.iloc[-1])
-        m60_m, m60_h, m60_h_prev = float(m60_macd.iloc[-1]), float(m60_hist.iloc[-1]), float(m60_hist.iloc[-2])
+        kd_60m_ok = is_low_kd_golden_cross(k_60m, d_60m)
+        kd_daily_ok = is_low_kd_golden_cross(k_daily, d_daily)
+        kd_weekly_ok = is_low_kd_golden_cross(k_weekly, d_weekly)
+        
+        # 三週期 KD 均落入轉折金叉區
+        kd_resonance = kd_60m_ok and kd_daily_ok and kd_weekly_ok
 
-        weekly_bullish = (w_m > w_s) and (w_h > 0)
-        daily_bullish = (d_m > 0) and (d_m > d_s)
-        daily_above_ma = (d_c > d_ma_val)
-        m60_cross_up = (m60_m > 0) and (m60_h > 0) and (m60_h_prev <= 0)
-
-        if weekly_bullish and daily_bullish and daily_above_ma and m60_cross_up:
+        # 兩大核心條件必須同時滿足（共振中的共振！）
+        if macd_resonance and kd_resonance:
             return True
+            
     except Exception:
         pass
     return False
@@ -205,61 +177,46 @@ def send_telegram_message(message):
     except Exception: pass
 
 # ==============================================================================
-# 🚀 主程式（台股多週期策略專用版 - 已移除美股）
+# 🚀 主程式
 # ==============================================================================
 if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股多週期三頻共振】盤後策略報告...")
+    print("🚀 啟動【台股新·多週期轉折起漲共振】盤後策略報告...")
     
-    # 1. 抓取台股所有標的
     ALL_TW_TICKERS = fetch_all_taiwan_market_tickers()
-    
-    # 2. 進行基本面/籌碼面初篩 (策略二與策略三候選名單)
     strat2_candidates, strat3_candidates = fetch_fundamental_snapshot(ALL_TW_TICKERS)
-    
-    # 3. 聯集所有需要跑技術面檢測的標的，避免重複掃描
     tech_scan_pool = sorted(list(set(strat2_candidates + strat3_candidates)))
     
     strat1_matches, strat2_matches, strat3_matches = [], [], []
 
-    print(f"⏳ 正在進行台股技術面安全分批掃描 (共 {len(tech_scan_pool)} 檔)...")
+    print(f"⏳ 正在進行台股新指標精密篩選 (共 {len(tech_scan_pool)} 檔)...")
     for idx, ticker in enumerate(tech_scan_pool, 1):
-        # 每 15 檔稍微隨機暫停，避免頻率過高被 API 擋 IP
         if idx % 15 == 0: 
             time.sleep(random.uniform(2.0, 3.5))
             
-        # 進行多週期技術面共振檢測
         if check_technical_resonance(ticker):
             name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
-            # 格式化為：`2330` (*台積電*)
             stock_label = f"`{ticker}` (*{name_zh}*)" if name_zh else f"`{ticker}`"
             
-            # 策略一：只要技術面過關就符合
             strat1_matches.append(stock_label)
-            
-            # 策略二：技術面過關 且 在基本面爆發名單中
-            if ticker in strat2_candidates: 
-                strat2_matches.append(stock_label)
-                
-            # 策略三：技術面過關 且 在核心存股名單中
-            if ticker in strat3_candidates: 
-                strat3_matches.append(stock_label)
+            if ticker in strat2_candidates: strat2_matches.append(stock_label)
+            if ticker in strat3_candidates: strat3_matches.append(stock_label)
 
     # 📝 建立台股獨立美化訊息
-    tw_msg = f"🇹🇼 *【台股市場：多週期技術面共振報告】*\n⏰ 報告時間: {tw_time_str}\n"
+    tw_msg = f"🇹🇼 *【台股市場：多週期 MACD 翻正 × 低檔 KD 金叉報告】*\n⏰ 報告時間: {tw_time_str}\n"
+    tw_msg += "↳ *新濾網條件*：60M/日/週 MACD 柱狀體首度轉正 ＋ KD 低檔 (≤30) 黃金交叉\n"
     tw_msg += "═" * 15 + "\n"
     
     tw_msg += "📈 *策略一：原版多週期三頻共振*\n"
     tw_msg += "↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "🚀 *策略二：獲利暴增 × 產業轉折爆發股*\n"
-    tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的 nudge。 💤") + "\n\n"
 
     tw_msg += "💎 *策略三：高技術壁壘 × 抗震核心存股龍頭*\n"
     tw_msg += "↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n"
 
-    # 發送 Telegram
     send_telegram_message(tw_msg)
-    print("✅ 台股獨立報告發送完畢！")
+    print("✅ 台股新指標共振報告發送完畢！")
