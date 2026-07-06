@@ -205,84 +205,61 @@ def send_telegram_message(message):
     except Exception: pass
 
 # ==============================================================================
-# 🚀 主程式
+# 🚀 主程式（台股多週期策略專用版 - 已移除美股）
 # ==============================================================================
 if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
-    current_hour = now_tw.hour
+    tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    # 🌅 早上時段：發送開盤前提醒
-    if current_hour < 11:
-        if os.path.exists("results.md"):
-            with open("results.md", "r", encoding="utf-8") as f:
-                saved_content = f.read()
-            remind_msg = saved_content.replace("# 📊 *全球雙市場中文化策略選股報告*", "🔔 *【開盤前提醒】雙市場精選報告*")
-            send_telegram_message(remind_msg)
-            print("✅ 晨間提醒流程執行完畢！")
-        exit(0)
-
-    # 📊 下午盤後時段
-    print("🚀 啟動【全球雙市場中文化策略選股系統】...")
+    print("🚀 啟動【台股多週期三頻共振】盤後策略報告...")
     
-    # --- Part 1: 台股全市場篩選 ---
+    # 1. 抓取台股所有標的
     ALL_TW_TICKERS = fetch_all_taiwan_market_tickers()
+    
+    # 2. 進行基本面/籌碼面初篩 (策略二與策略三候選名單)
     strat2_candidates, strat3_candidates = fetch_fundamental_snapshot(ALL_TW_TICKERS)
+    
+    # 3. 聯集所有需要跑技術面檢測的標的，避免重複掃描
     tech_scan_pool = sorted(list(set(strat2_candidates + strat3_candidates)))
     
     strat1_matches, strat2_matches, strat3_matches = [], [], []
 
     print(f"⏳ 正在進行台股技術面安全分批掃描 (共 {len(tech_scan_pool)} 檔)...")
     for idx, ticker in enumerate(tech_scan_pool, 1):
-        if idx % 15 == 0: time.sleep(random.uniform(2.0, 3.5))
+        # 每 15 檔稍微隨機暫停，避免頻率過高被 API 擋 IP
+        if idx % 15 == 0: 
+            time.sleep(random.uniform(2.0, 3.5))
+            
+        # 進行多週期技術面共振檢測
         if check_technical_resonance(ticker):
             name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
+            # 格式化為：`2330` (*台積電*)
             stock_label = f"`{ticker}` (*{name_zh}*)" if name_zh else f"`{ticker}`"
+            
+            # 策略一：只要技術面過關就符合
             strat1_matches.append(stock_label)
-            if ticker in strat2_candidates: strat2_matches.append(stock_label)
-            if ticker in strat3_candidates: strat3_matches.append(stock_label)
+            
+            # 策略二：技術面過關 且 在基本面爆發名單中
+            if ticker in strat2_candidates: 
+                strat2_matches.append(stock_label)
+                
+            # 策略三：技術面過關 且 在核心存股名單中
+            if ticker in strat3_candidates: 
+                strat3_matches.append(stock_label)
 
-    # --- Part 2: 美股全市場大市值雙增長篩選 (內建中文化) ---
-    ALL_US_TICKERS = fetch_all_us_market_tickers()
+    # 📝 建立台股獨立美化訊息
+    tw_msg = f"🇹🇼 *【台股市場：多週期技術面共振報告】*\n⏰ 報告時間: {tw_time_str}\n"
+    tw_msg += "═" * 15 + "\n"
     
-    tech_keywords = ["NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "AMD", "AVGO", "TSM", "SMCI", "ASML", "QCOM", "MU", "LRCX", "AMAT", "TSLA", "NFLX"]
-    us_scan_pool = [tk for tk in ALL_US_TICKERS if tk in tech_keywords or any(tk.startswith(letter) for letter in ['A', 'M', 'N', 'T'])]
-    us_scan_pool = sorted(list(set(us_scan_pool[:75]))) 
-    
-    print(f"⏳ 正在安全分批掃描全美精選科技權值財報並轉換中文名稱 (共 {len(us_scan_pool)} 檔)...")
-    us_growth_reports = []
-    for idx, us_tk in enumerate(us_scan_pool, 1):
-        if idx % 15 == 0:
-            time.sleep(random.uniform(2.5, 4.0)) 
-        report_line = inspect_us_earnings_filter(us_tk)
-        if report_line: 
-            us_growth_reports.append(report_line)
-        time.sleep(0.5)
+    tw_msg += "📈 *策略一：原版多週期三頻共振*\n"
+    tw_msg += "↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
 
-    # 📝 格式化全球雙市場綜合報告
-    tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
-    tg_msg = f"# 📊 *全球雙市場中文化策略選股報告*\n⏰ 執行時間: {tw_time_str}\n"
-    tg_msg += "---"
-    
-    # 🇺🇸 美股專區 (全新中文化格式)
-    tg_msg += "\n\n🇺🇸 *【美股全市場：最新季度財報雙增長績優股】* 🚀\n"
-    tg_msg += "↳ *過濾條件*：最新單季營收與淨利雙增長企業。\n"
-    if us_growth_reports:
-        for r in us_growth_reports: tg_msg += f"{r}\n"
-    else:
-        tg_msg += "• 今日無符合雙增長條件之美股。 💤\n"
-        
-    tg_msg += "---"
-    
-    # 🇹🇼 台股專區
-    tg_msg += "\n\n📈 *【台股策略一：原版多週期三頻共振】*\n"
-    tg_msg += "• 符合標的：" + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "🚀 *策略二：獲利暴增 × 產業轉折爆發股*\n"
+    tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tg_msg += "\n🚀 *【台股策略二：獲利暴增 × 產業轉折爆發股】*\n"
-    tg_msg += "• 符合標的：" + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "💎 *策略三：高技術壁壘 × 抗震核心存股龍頭*\n"
+    tw_msg += "↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n"
 
-    tg_msg += "\n💎 *【台股策略三：高技術壁壘 × 抗震核心存股龍頭】*\n"
-    tg_msg += "• 符合標的：" + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n"
-
-    with open("results.md", "w", encoding="utf-8") as f: f.write(tg_msg)
-    send_telegram_message(tg_msg)
-    print("✅ 全球雙市場中文化與全自動篩選流程順利完成！")
+    # 發送 Telegram
+    send_telegram_message(tw_msg)
+    print("✅ 台股獨立報告發送完畢！")
