@@ -2,11 +2,9 @@ name: Auto Stock Scanner
 
 on:
   schedule:
-    # 1. 下午 15:43 執行（UTC 07:43）避開 30 分大塞車
-    - cron: '43 7 * * 1-5'
-    # 2. 早上 08:18 執行（UTC 00:18）避開 30 分大塞車
-    - cron: '18 0 * * 1-5'
-  workflow_dispatch: # 允許手動點擊按鈕立即執行
+    # 💡 換算：台灣時間 08:30 與 15:30 執行（週一到週五）
+    - cron: '30 0,7 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   scan:
