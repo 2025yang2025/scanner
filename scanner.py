@@ -168,12 +168,11 @@ def check_oversold_rebound(df_daily):
     return False
 
 def check_multi_timeframe_tangling(df_60m, df_daily, df_weekly):
-    """ 策略三：60分K/日K/週K同步均線糾結 (保持原本設定) """
+    """ 策略三：60分K/日K/週K同步均線糾結 """
     try:
-        c_60m = extract_close_series(df_60m)
-        c_daily = extract_close_series(df_daily)
-        c_weekly = extract_close_series(df_weekly)
-        
+        c_60m = df_60m['Close'].squeeze().astype(float)
+        c_daily = df_daily['Close'].squeeze().astype(float)
+        c_weekly = df_weekly['Close'].squeeze().astype(float)
         if len(c_60m) < 20 or len(c_daily) < 20 or len(c_weekly) < 20: return False
         
         m60_tangle = (max(c_60m.rolling(5).mean().iloc[-1], c_60m.rolling(10).mean().iloc[-1], c_60m.rolling(20).mean().iloc[-1]) - min(c_60m.rolling(5).mean().iloc[-1], c_60m.rolling(10).mean().iloc[-1], c_60m.rolling(20).mean().iloc[-1])) / c_60m.rolling(20).mean().iloc[-1]
