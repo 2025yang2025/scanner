@@ -1,273 +1,44 @@
-import pandas as pd
-import yfinance as yf
-import requests
-import os
-import time
-import random
+name: Taiwan Market Multi-Strategy Monitor
 
-# ==============================================================================
-# 🇹🇼 台股全市場全自動動態獲取
-# ==============================================================================
-DYNAMIC_STOCK_NAMES = {}
-
-def fetch_all_taiwan_market_tickers():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    all_tickers = []
-    try:
-        url_twse = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-        res = requests.get(url_twse, headers=headers, timeout=10)
-        if res.status_code == 200:
-            for item in res.json():
-                code = item.get("Code", "").strip()
-                name = item.get("Name", "").strip()
-                if code.isdigit() and len(code) == 4:
-                    ticker_id = f"{code}.TW"
-                    all_tickers.append(ticker_id)
-                    DYNAMIC_STOCK_NAMES[ticker_id] = name
-    except Exception:
-        pass
-    if not all_tickers:
-        backup_dict = {"2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科"}
-        for k, v in backup_dict.items():
-            all_tickers.append(k)
-            DYNAMIC_STOCK_NAMES[k] = v
-    return sorted(list(set(all_tickers)))
-
-def fetch_fundamental_snapshot(tickers):
-    """
-    基本面與核心焦點股篩選容器
-    """
-    strat2_candidates = []
-    strat3_candidates = []
-    strat4_candidates = [] # 🎯 均線糾結策略的掃描池 (可全市場掃描或針對特定族群)
+on:
+  schedule:
+    # 💡 台灣與 UTC 時間換算對照表（每週一至週五台股交易日執行）：
+    # 1. 早上 08:37 -> UTC 00:37 (開盤前最後試撮、準備期)
+    # 2. 早上 09:47 -> UTC 01:47 (盤中即時追蹤 1)
+    # 3. 早上 10:52 -> UTC 02:52 (盤中即時追蹤 2)
+    # 4. 中午 11:47 -> UTC 03:47 (盤中即時追蹤 3)
+    # 5. 中午 12:37 -> UTC 04:37 (盤中即時追蹤 4)
+    # 6. 下午 15:33 -> UTC 07:33 (盤後完全定價、策略總結)
     
-    for tk in tickers:
-        pure_code = tk.split('.')[0]
-        # 篩選半導體、AI硬體、電子權值與關鍵零組件鏈
-        if pure_code.startswith(('23', '24', '30', '32', '34', '35', '36', '37', '61', '62', '64', '80')):
-            strat2_candidates.append(tk)
-            
-            # 策略三核心名單
-            if pure_code in ['2330', '2454', '3443', '3661', '6415', '3017', '3533', '6187']:
-                strat3_candidates.append(tk)
-                
-            # 💡 策略四：我們預設將上述主力電子、硬體供應鏈全部納入「均線糾結」壓縮測試
-            strat4_candidates.append(tk)
-                
-    return strat2_candidates, strat3_candidates, strat4_candidates
+    - cron: '37 0,4 * * 1-5'   # 觸發 08:37 (UTC 0) 與 12:37 (UTC 4)
+    - cron: '47 1,3 * * 1-5'   # 觸發 09:47 (UTC 1) 與 11:47 (UTC 3)
+    - cron: '52 2 * * 1-5'     # 觸發 10:52 (UTC 2)
+    - cron: '33 7 * * 1-5'     # 觸發 15:33 (UTC 7)
 
-# ==============================================================================
-# 📈 數學指標計算核心 (MACD, KD, Extract)
-# ==============================================================================
-def calculate_macd(close_series, fast=12, slow=26, signal=9):
-    fast_ema = close_series.ewm(span=fast, adjust=False).mean()
-    slow_ema = slow_ema = close_series.ewm(span=slow, adjust=False).mean()
-    macd_line = fast_ema - slow_ema
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    hist = macd_line - signal_line
-    return macd_line, signal_line, hist
+  workflow_dispatch:           # 保留此設定，讓你想手動測試時隨時可以去 GitHub 頁面點擊按鈕執行
 
-def calculate_kd(df, n=9, m1=3, m2=3):
-    high_n = df['High'].rolling(window=n).max()
-    low_n = df['Low'].rolling(window=n).min()
-    close = df['Close']
-    rsv = (close - low_n) / (high_n - low_n) * 100
-    rsv = rsv.fillna(50)
-    k_list, d_list = [], []
-    current_k, current_d = 50.0, 50.0
-    for r in rsv:
-        current_k = (1/m1) * r + ((m1-1)/m1) * current_k
-        current_d = (1/m2) * current_k + ((m2-1)/m2) * current_d
-        k_list.append(current_k)
-        d_list.append(current_d)
-    return pd.Series(k_list, index=df.index), pd.Series(d_list, index=df.index)
+jobs:
+  run-strategy:
+    runs-on: ubuntu-latest
 
-def extract_ohlc_df(df):
-    if df.empty: return pd.DataFrame()
-    new_df = pd.DataFrame(index=df.index)
-    if isinstance(df.columns, pd.MultiIndex):
-        for col in ['Open', 'High', 'Low', 'Close']:
-            if col in df.columns.get_level_values(0):
-                new_df[col] = df.xs(col, axis=1, level=0).squeeze().astype(float)
-            elif col in df.columns.get_level_values(1):
-                new_df[col] = df.xs(col, axis=1, level=1).squeeze().astype(float)
-    else:
-        for col in ['Open', 'High', 'Low', 'Close']:
-            col_match = [c for c in df.columns if str(c).strip().lower() == col.lower()]
-            if col_match:
-                new_df[col] = df[col_match[0]].squeeze().astype(float)
-    return new_df
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-def extract_close_series(df):
-    """
-    從 yfinance 下載的 Dataframe 提取一維價格序列
-    """
-    cleaned = extract_ohlc_df(df)
-    if not cleaned.empty and 'Close' in cleaned.columns:
-        return cleaned['Close']
-    return pd.Series(dtype=float)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'        # 自動快取加速下一次的執行速度
 
-# ==============================================================================
-# 🎯 策略 1, 2, 3 濾網：MACD 動能揚升 × KD 低檔金叉
-# ==============================================================================
-def check_macd_kd_resonance(df_60m, df_daily, df_weekly):
-    try:
-        c_60m = df_60m['Close']
-        c_daily = df_daily['Close']
-        c_weekly = df_weekly['Close']
-        
-        # --- 1. MACD 柱狀體判定 ---
-        _, _, m60_hist = calculate_macd(c_60m)
-        _, _, d_hist = calculate_macd(c_daily)
-        _, _, w_hist = calculate_macd(c_weekly)
-        
-        if len(m60_hist) < 2 or len(d_hist) < 2 or len(w_hist) < 2: return False
-        
-        m60_macd_up = m60_hist.iloc[-1] > m60_hist.iloc[-2]
-        daily_macd_up = d_hist.iloc[-1] > d_hist.iloc[-2]
-        weekly_macd_up = w_hist.iloc[-1] > w_hist.iloc[-2]
-        if not (m60_macd_up and daily_macd_up and weekly_macd_up): return False
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas yfinance requests
 
-        # --- 2. KD 低檔金叉判定 ---
-        k_60m, d_60m = calculate_kd(df_60m)
-        k_daily, d_daily = calculate_kd(df_daily)
-        k_weekly, d_weekly = calculate_kd(df_weekly)
-        
-        def is_low_kd_golden_cross(k_ser, d_ser, threshold=30):
-            if len(k_ser) < 2: return False
-            cross_up = (k_ser.iloc[-1] > d_ser.iloc[-1]) and (k_ser.iloc[-2] <= d_ser.iloc[-2])
-            is_low_level = (k_ser.iloc[-1] <= threshold) or (d_ser.iloc[-1] <= threshold)
-            return cross_up and is_low_level
-
-        if is_low_kd_golden_cross(k_60m, d_60m) and is_low_kd_golden_cross(k_daily, d_daily) and is_low_kd_golden_cross(k_weekly, d_weekly):
-            return True
-    except Exception:
-        pass
-    return False
-
-# ==============================================================================
-# 🎯 策略 4 濾網：三週期均線糾結壓縮鎖定
-# ==============================================================================
-def check_ma_tangle_resonance(df_60m, df_daily, df_weekly):
-    """
-    策略四：60分K、日K、週K同步均線糾結 (三週期共振壓縮)
-    """
-    try:
-        c_60m = extract_close_series(df_60m)
-        c_daily = extract_close_series(df_daily)
-        c_weekly = extract_close_series(df_weekly)
-        
-        if len(c_60m) < 20 or len(c_daily) < 20 or len(c_weekly) < 20: return False
-        
-        # 1. 60分K 糾結度計算
-        m60_ma5 = c_60m.rolling(window=5).mean().iloc[-1]
-        m60_ma10 = c_60m.rolling(window=10).mean().iloc[-1]
-        m60_ma20 = c_60m.rolling(window=20).mean().iloc[-1]
-        m60_tangle = (max(m60_ma5, m60_ma10, m60_ma20) - min(m60_ma5, m60_ma10, m60_ma20)) / m60_ma20
-        
-        # 2. 日K 糾結度計算
-        d_ma5 = c_daily.rolling(window=5).mean().iloc[-1]
-        d_ma10 = c_daily.rolling(window=10).mean().iloc[-1]
-        d_ma20 = c_daily.rolling(window=20).mean().iloc[-1]
-        d_tangle = (max(d_ma5, d_ma10, d_ma20) - min(d_ma5, d_ma10, d_ma20)) / d_ma20
-        
-        # 3. 週K 糾結度計算
-        w_ma5 = c_weekly.rolling(window=5).mean().iloc[-1]
-        w_ma10 = c_weekly.rolling(window=10).mean().iloc[-1]
-        w_ma20 = c_weekly.rolling(window=20).mean().iloc[-1]
-        w_tangle = (max(w_ma5, w_ma10, w_ma20) - min(w_ma5, w_ma10, w_ma20)) / w_ma20
-        
-        close_today = c_daily.iloc[-1]
-        
-        # 三週期同時糾結，且股價站上日20MA之上防守
-        if m60_tangle < 0.025 and d_tangle < 0.03 and w_tangle < 0.035 and close_today > d_ma20:
-            return True
-    except Exception:
-        pass
-    return False
-
-# ==============================================================================
-# 💬 Telegram 發送
-# ==============================================================================
-def send_telegram_message(message):
-    bot_token = os.environ.get("TG_BOT_TOKEN")
-    chat_id = os.environ.get("TG_CHAT_ID")
-    if not bot_token or not chat_id: return
-    bot_token, chat_id = str(bot_token).strip(), str(chat_id).strip()
-    if bot_token.lower().startswith("bot"): bot_token = bot_token[3:]
-
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception: pass
-
-# ==============================================================================
-# 🚀 主程式
-# ==============================================================================
-if __name__ == "__main__":
-    now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
-    tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
-
-    print(f"🚀 啟動【台股 4 大策略盤中高頻監控】時間: {tw_time_str}...")
-    
-    ALL_TW_TICKERS = fetch_all_taiwan_market_tickers()
-    strat2_candidates, strat3_candidates, strat4_candidates = fetch_fundamental_snapshot(ALL_TW_TICKERS)
-    
-    # 聯集所有需要掃描的標的以節省下載次數
-    tech_scan_pool = sorted(list(set(strat2_candidates + strat3_candidates + strat4_candidates)))
-    
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches = [], [], [], []
-
-    print(f"⏳ 正在進行全市場核心標的交叉驗證 (共 {len(tech_scan_pool)} 檔)...")
-    for idx, ticker in enumerate(tech_scan_pool, 1):
-        if idx % 15 == 0: 
-            time.sleep(random.uniform(1.5, 2.5))
-            
-        try:
-            # 💡 盤中下載：統一下載足夠長度的歷史數據
-            raw_60m = yf.download(ticker, period="1mo", interval="60m", progress=False, auto_adjust=True)
-            raw_daily = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
-            raw_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False, auto_adjust=True)
-            
-            df_60m = extract_ohlc_df(raw_60m)
-            df_daily = extract_ohlc_df(raw_daily)
-            df_weekly = extract_ohlc_df(raw_weekly)
-            
-            if df_60m.empty or df_daily.empty or df_weekly.empty: continue
-            
-            name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
-            stock_label = f"`{ticker}` (*{name_zh}*)" if name_zh else f"`{ticker}`"
-            
-            # --- 驗證 策略 1, 2, 3 (MACD + KD) ---
-            if check_macd_kd_resonance(df_60m, df_daily, df_weekly):
-                strat1_matches.append(stock_label)
-                if ticker in strat2_candidates: strat2_matches.append(stock_label)
-                if ticker in strat3_candidates: strat3_matches.append(stock_label)
-                
-            # --- 驗證 策略 4 (三週期均線糾結) ---
-            if ticker in strat4_candidates:
-                if check_ma_tangle_resonance(df_60m, df_daily, df_weekly):
-                    strat4_matches.append(stock_label)
-                    
-        except Exception:
-            pass
-
-    # 📝 建立包含新策略四的完整自動化推播訊息
-    tw_msg = f"🇹🇼 *【台股市場：多策略多週期即時追蹤】*\n⏰ 監控時間: {tw_time_str}\n"
-    tw_msg += "═" * 15 + "\n"
-    
-    tw_msg += "📈 *策略一：原版多週期三頻共振*\n"
-    tw_msg += "↳ " + (", ".join(strat1_matches) if strat1_matches else "當前無符合標的。 💤") + "\n\n"
-
-    tw_msg += "🚀 *策略二：獲利暴增 × 產業轉折爆發股*\n"
-    tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "當前無符合標的。 💤") + "\n\n"
-
-    tw_msg += "💎 *策略三：高技術壁壘 × 抗震核心存股龍頭*\n"
-    tw_msg += "↳ " + (", ".join(strat3_matches) if strat3_matches else "當前無符合標的。 💤") + "\n\n"
-
-    tw_msg += "💥 *策略四：三週期均線糾結 (共振壓縮)*\n"
-    tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "當前無符合標的。 💤") + "\n"
-
-    send_telegram_message(tw_msg)
-    print("✅ 台股即時多策略報告（含策略四糾結度）發送完畢！")
+      - name: Execute Strategy Script
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          python main.py
