@@ -16,7 +16,7 @@ def fetch_all_taiwan_market_tickers():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     all_tickers = []
     
-    # 1. 撈取全市場基本交易資料（解除開頭數字限制）
+    # 1. 撈取全市場基本交易資料
     try:
         url_twse = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         res = requests.get(url_twse, headers=headers, timeout=10)
@@ -24,7 +24,6 @@ def fetch_all_taiwan_market_tickers():
             for item in res.json():
                 code = item.get("Code", "").strip()
                 name = item.get("Name", "").strip()
-                # 只要是 4 碼純數字的個股（上市/櫃主要股票）就全部納入
                 if code.isdigit() and len(code) == 4:
                     ticker_id = f"{code}.TW"
                     all_tickers.append(ticker_id)
@@ -41,7 +40,6 @@ def fetch_all_taiwan_market_tickers():
                 code = item.get("Code", "").strip()
                 ticker_id = f"{code}.TW"
                 
-                # 轉換數值並處理異常字串 (如 "0.00" 或 "-" )
                 try:
                     pe = float(item.get("PEratio", 0)) if item.get("PEratio") else 0.0
                 except:
@@ -55,7 +53,6 @@ def fetch_all_taiwan_market_tickers():
     except Exception as e:
         print(f"⚠️ 撈取證交所估值資料異常: {e}")
 
-    # 備用防錯機制
     if not all_tickers:
         backup_dict = {"2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科"}
         for k, v in backup_dict.items():
@@ -216,50 +213,39 @@ def check_strat5_tangling_ordered(df_60m, df_daily, df_weekly):
     return False
 
 def check_strat6_undervalued(ticker):
-    """ 策略六：基本面價值型低估股 (低本益比 PE <= 12 且 低股淨比 PB <= 1.0 且 有賺錢 PE > 0) """
+    """ 策略六：基本面價值型低估股 """
     data = FUNDAMENTAL_DATA.get(ticker)
     if not data: return False
     
     pe = data.get("PE", 0)
     pb = data.get("PB", 0)
     
-    # 限制條件：本益比低於 12 倍 (且大於 0 排除虧損公司)，同時股價淨值比小於等於 1.0 (破淨股)
     if 0 < pe <= 12.0 and 0 < pb <= 1.0:
         return True, pe, pb
     return False
 
 def check_strat7_volume_breakout(df_daily):
-    """ 
-    策略七：關鍵均線多頭突破 × 量能倍增 (帶量突破)
-    邏輯：
-    1. 當日收盤價突破 20 日均線 (昨日在月線下，今天強勢突破站穩)
-    2. 當日成交量大於 5 日均量 的 1.5 倍以上 (有主力大單敲門)
-    3. KD 多頭向上且非極高檔鈍化 (K 值 < 75 預防短線追高風險)
-    """
+    """ 策略七：關鍵均線多頭突破 × 量能倍增 (帶量突破) """
     try:
         if df_daily.empty or len(df_daily) < 20: return False
         
         c_daily = df_daily['Close'].squeeze().astype(float)
         v_daily = df_daily['Volume'].squeeze().astype(float)
         
-        # 1. 計算 20日均線(月線)
         ma20 = c_daily.rolling(window=20).mean()
         close_today = c_daily.iloc[-1]
         close_yesterday = c_daily.iloc[-2]
         ma20_today = ma20.iloc[-1]
         ma20_yesterday = ma20.iloc[-2]
         
-        # 突破條件：今日收盤大於月線，且昨日收盤小於月線 (或今日大幅跳空大漲 > 2%)
         price_break_cond = (close_today > ma20_today) and (close_yesterday <= ma20_yesterday or (close_today - close_yesterday) / close_yesterday > 0.02)
         if not price_break_cond: return False
         
-        # 2. 量能條件：今天成交量 > 5日均量 * 1.5
         v_ma5 = v_daily.rolling(window=5).mean().iloc[-1]
         volume_today = v_daily.iloc[-1]
         volume_cond = volume_today > (v_ma5 * 1.5)
         if not volume_cond: return False
         
-        # 3. KD 條件：日KD向上，且 K 值尚未進入 75 以上的超買極端區
         k_series, d_series = calculate_kd(df_daily)
         k_today = k_series.iloc[-1]
         d_today = d_series.iloc[-1]
@@ -293,7 +279,7 @@ def send_telegram_message(message):
         print(f"❌ Telegram 發送異常: {e}")
 
 # ==============================================================================
-# 🚀 主程式 (全市場綜合動態優化版)
+# 🚀 主程式
 # ==============================================================================
 if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
@@ -306,10 +292,10 @@ if __name__ == "__main__":
         print("❌ 未能取得任何股票代碼，程式結束。")
         exit()
 
-    print(f"⏳ 步驟 1: 批次下載全市場日K資料進行量能過濾 (共 {len(tech_scan_pool)} 檔)...")
+    # ─── 【量能篩選門檻更新：調整為 1000 張】 ───
+    print(f"⏳ 步驟 1: 批次下載全市場日K資料進行量能過濾 (門檻：20日均量 &gt;= 1000張，共 {len(tech_scan_pool)} 檔)...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
-    # 篩選出 20 日均量 >= 500 張的精選名單
     qualified_tickers = []
     for ticker in tech_scan_pool:
         try:
@@ -321,14 +307,14 @@ if __name__ == "__main__":
                 
             if len(v_daily) >= 20:
                 v_ma20_sheets = v_daily.rolling(window=20).mean().iloc[-1] / 1000
-                if v_ma20_sheets >= 500:
+                # 判斷門檻修改為 1000 張
+                if v_ma20_sheets >= 1000:
                     qualified_tickers.append(ticker)
         except Exception:
             continue
 
     print(f"🎯 通過量能防線股票共 {len(qualified_tickers)} 檔。")
     
-    # 初始化 7 大策略匹配清單
     strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches = [], [], [], [], [], [], []
 
     if qualified_tickers:
@@ -339,7 +325,6 @@ if __name__ == "__main__":
         print("⏳ 步驟 3: 記憶體內高速多維策略流檢測中...")
         for ticker in qualified_tickers:
             try:
-                # ─── 【安全強化：防範 YFinance API 漏失、延遲或 KeyError】 ───
                 if len(qualified_tickers) == 1:
                     df_d = full_df_daily.copy()
                     df_m60 = full_df_60m.copy()
@@ -355,12 +340,10 @@ if __name__ == "__main__":
 
                 if df_d.empty or df_m60.empty or df_w.empty: 
                     continue
-                # ─── 【安全強化結束】 ───
 
                 name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
                 stock_label = f"<code>{ticker}</code>(<i>{name_zh}</i>)" if name_zh else f"<code>{ticker}</code>"
 
-                # 獨立分流檢測各技術面策略
                 if check_strat1_resonance(df_m60, df_d, df_w):
                     strat1_matches.append(stock_label)
                 if check_oversold_rebound(df_d):
@@ -372,13 +355,11 @@ if __name__ == "__main__":
                 if check_strat5_tangling_ordered(df_m60, df_d, df_w):
                     strat5_matches.append(stock_label)
                 
-                # 檢測策略六：基本面低估個股 (回傳含當前數據)
                 val_check = check_strat6_undervalued(ticker)
                 if val_check:
                     _, cur_pe, cur_pb = val_check
                     strat6_matches.append(f"{stock_label}[PE:{cur_pe:.1f}, PB:{cur_pb:.2f}]")
 
-                # 檢測策略七：關鍵均線多頭突破 × 量能倍增
                 vol_breakout_check = check_strat7_volume_breakout(df_d)
                 if vol_breakout_check:
                     _, vol_ratio = vol_breakout_check
@@ -390,8 +371,8 @@ if __name__ == "__main__":
                 print(f"⚠️ 處理個股 {ticker} 時發生未預期錯誤: {e}")
                 continue
 
-    # 📝 建立 7 大策略綜合美化報告訊息
-    tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 500張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
+    # 📝 建立 7 大策略綜合美化報告訊息 (TG 訊息內文的提示也同步更新為 1000張)
+    tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 1000張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
     tw_msg += "───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】原版多週期三頻共振 (MACD + KD 低檔金叉)</b>\n"
@@ -407,7 +388,7 @@ if __name__ == "__main__":
     tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的. 💤") + "\n\n"
 
     tw_msg += "🚀 <b>【策略五】同步均線糾結 × 多頭順序排列 (60K＞日K＞週K)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的. 💤") + "\n\n"
 
     tw_msg += "💰 <b>【策略六】價值型低估股 (本益比 ≤ 12 × 股價淨值比 ≤ 1.0)</b>\n"
     tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
