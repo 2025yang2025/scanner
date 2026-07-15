@@ -228,6 +228,50 @@ def check_strat6_undervalued(ticker):
         return True, pe, pb
     return False
 
+def check_strat7_volume_breakout(df_daily):
+    """ 
+    策略七：關鍵均線多頭突破 × 量能倍增 (帶量突破)
+    邏輯：
+    1. 當日收盤價突破 20 日均線 (昨日在月線下，今天強勢突破站穩)
+    2. 當日成交量大於 5 日均量 的 1.5 倍以上 (有主力大單敲門)
+    3. KD 多頭向上且非極高檔鈍化 (K 值 < 75 預防短線追高風險)
+    """
+    try:
+        if df_daily.empty or len(df_daily) < 20: return False
+        
+        c_daily = df_daily['Close'].squeeze().astype(float)
+        v_daily = df_daily['Volume'].squeeze().astype(float)
+        
+        # 1. 計算 20日均線(月線)
+        ma20 = c_daily.rolling(window=20).mean()
+        close_today = c_daily.iloc[-1]
+        close_yesterday = c_daily.iloc[-2]
+        ma20_today = ma20.iloc[-1]
+        ma20_yesterday = ma20.iloc[-2]
+        
+        # 突破條件：今日收盤大於月線，且昨日收盤小於月線 (或今日大幅跳空大漲 > 2%)
+        price_break_cond = (close_today > ma20_today) and (close_yesterday <= ma20_yesterday or (close_today - close_yesterday) / close_yesterday > 0.02)
+        if not price_break_cond: return False
+        
+        # 2. 量能條件：今天成交量 > 5日均量 * 1.5
+        v_ma5 = v_daily.rolling(window=5).mean().iloc[-1]
+        volume_today = v_daily.iloc[-1]
+        volume_cond = volume_today > (v_ma5 * 1.5)
+        if not volume_cond: return False
+        
+        # 3. KD 條件：日KD向上，且 K 值尚未進入 75 以上的超買極端區
+        k_series, d_series = calculate_kd(df_daily)
+        k_today = k_series.iloc[-1]
+        d_today = d_series.iloc[-1]
+        kd_cond = (k_today > d_today) and (k_today < 75)
+        
+        if kd_cond:
+            volume_ratio = volume_today / v_ma5 if v_ma5 > 0 else 1.0
+            return True, volume_ratio
+    except Exception:
+        pass
+    return False
+
 # ==============================================================================
 # 💬 Telegram 發送
 # ==============================================================================
@@ -255,7 +299,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股盤後 6 大策略全市場篩選報告】...")
+    print("🚀 啟動【台股盤後 7 大策略全市場篩選報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     
     if not tech_scan_pool:
@@ -284,8 +328,8 @@ if __name__ == "__main__":
 
     print(f"🎯 通過量能防線股票共 {len(qualified_tickers)} 檔。")
     
-    # 初始化 6 大策略匹配清單
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches = [], [], [], [], [], []
+    # 初始化 7 大策略匹配清單
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches = [], [], [], [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載精選股票的 60分K 與 週K 資料...")
@@ -334,13 +378,19 @@ if __name__ == "__main__":
                     _, cur_pe, cur_pb = val_check
                     strat6_matches.append(f"{stock_label}[PE:{cur_pe:.1f}, PB:{cur_pb:.2f}]")
 
+                # 檢測策略七：關鍵均線多頭突破 × 量能倍增
+                vol_breakout_check = check_strat7_volume_breakout(df_d)
+                if vol_breakout_check:
+                    _, vol_ratio = vol_breakout_check
+                    strat7_matches.append(f"{stock_label}[量比:{vol_ratio:.1f}倍]")
+
             except KeyError:
                 continue
             except Exception as e:
                 print(f"⚠️ 處理個股 {ticker} 時發生未預期錯誤: {e}")
                 continue
 
-    # 📝 建立 6 大策略綜合美化報告訊息
+    # 📝 建立 7 大策略綜合美化報告訊息
     tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 500張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
     tw_msg += "───────────────────\n\n"
     
@@ -354,13 +404,16 @@ if __name__ == "__main__":
     tw_msg += "↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "🔥 <b>【策略四】短線極限超賣 × 爆量紅K (恐慌止跌)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的. 💤") + "\n\n"
 
     tw_msg += "🚀 <b>【策略五】同步均線糾結 × 多頭順序排列 (60K＞日K＞週K)</b>\n"
     tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "💰 <b>【策略六】價值型低估股 (本益比 ≤ 12 × 股價淨值比 ≤ 1.0)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
+
+    tw_msg += "⚡ <b>【策略七】關鍵均線多頭突破 × 量能倍增 (帶量突破)</b>\n"
+    tw_msg += "↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
     print("✅ 台股多策略基本面綜合報告發送完畢！")
