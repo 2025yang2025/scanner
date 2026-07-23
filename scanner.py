@@ -191,26 +191,45 @@ def check_extreme_drop_volume_up(df_daily):
         pass
     return False
 
-def check_strat5_tangling_ordered(df_60m, df_daily, df_weekly):
-    """ 策略五：同步均線糾結 × 多頭順序排列 (60K＞日K＞週K) """
+def check_bollinger_squeeze_fast(df_daily):
+    """ 策略五：布林軌道極致壓縮 """
+    #條件：
+    #1. 帶寬壓縮至 6% 以內
+    #2. 最新收盤價站上 20 日均線 (MA20)
+    #3. 最新收盤價距離布林上軌在 2% 以內
+    
     try:
-        c_60m = df_60m['Close'].squeeze().astype(float)
+        # 確保 Close 欄位存在並轉換型態
         c_daily = df_daily['Close'].squeeze().astype(float)
-        c_weekly = df_weekly['Close'].squeeze().astype(float)
-        if len(c_60m) < 20 or len(c_daily) < 20 or len(c_weekly) < 20: return False
         
-        m60_tangle = (max(c_60m.rolling(5).mean().iloc[-1], c_60m.rolling(10).mean().iloc[-1], c_60m.rolling(20).mean().iloc[-1]) - min(c_60m.rolling(5).mean().iloc[-1], c_60m.rolling(10).mean().iloc[-1], c_60m.rolling(20).mean().iloc[-1])) / c_60m.rolling(20).mean().iloc[-1]
-        d_tangle = (max(c_daily.rolling(5).mean().iloc[-1], c_daily.rolling(10).mean().iloc[-1], c_daily.rolling(20).mean().iloc[-1]) - min(c_daily.rolling(5).mean().iloc[-1], c_daily.rolling(10).mean().iloc[-1], c_daily.rolling(20).mean().iloc[-1])) / c_daily.rolling(20).mean().iloc[-1]
-        w_tangle = (max(c_weekly.rolling(5).mean().iloc[-1], c_weekly.rolling(10).mean().iloc[-1], c_weekly.rolling(20).mean().iloc[-1]) - min(c_weekly.rolling(5).mean().iloc[-1], c_weekly.rolling(10).mean().iloc[-1], c_weekly.rolling(20).mean().iloc[-1])) / c_weekly.rolling(20).mean().iloc[-1]
+        # 計算 20日均線 (MA20) 與標準差
+        ma20 = c_daily.rolling(window=20).mean()
+        std20 = c_daily.rolling(window=20).std()
         
-        base_tangle_cond = (m60_tangle < 0.025 and d_tangle < 0.03 and w_tangle < 0.035 and c_daily.iloc[-1] > c_daily.rolling(20).mean().iloc[-1])
-        if not base_tangle_cond: return False
+        # 簡化帶寬計算: (上軌 - 下軌) / MA20 = (4 * std20) / MA20
+        bandwidth = (4 * std20) / ma20
+        current_bw = bandwidth.iloc[-1]
         
-        if float(c_60m.iloc[-1]) > float(c_daily.iloc[-1]) > float(c_weekly.iloc[-1]):
-            return True
-    except Exception:
+        # 取得最後一筆資料
+        current_close = c_daily.iloc[-1]
+        current_ma20 = ma20.iloc[-1]
+        current_up_band = current_ma20 + (2 * std20.iloc[-1])
+        
+        # 判斷條件
+        cond_squeeze = current_bw <= 0.06
+        cond_above_ma = current_close >= current_ma20
+        cond_near_upper = ((current_up_band - current_close) / current_close) <= 0.02
+        
+        if cond_squeeze and cond_above_ma and cond_near_upper:
+            # 回傳 True 以及帶寬的百分比數值 (四捨五入到小數點後兩位，方便閱讀)
+            return True, round(current_bw * 100, 2)
+            
+    except Exception as e:
+        # 實務上可以考慮加上 print(e) 或 logging 方便未來除錯
         pass
-    return False
+        
+    # 失敗時統一回傳兩個值，避免主程式 unpacking 報錯
+    return False, 0
 
 def check_strat6_undervalued(ticker):
     """ 策略六：基本面價值型低估股 """
