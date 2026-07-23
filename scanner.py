@@ -193,42 +193,28 @@ def check_extreme_drop_volume_up(df_daily):
 
 def check_bollinger_squeeze_fast(df_daily):
     """ 策略五：布林軌道極致壓縮 """
-    #條件：
-    #1. 帶寬壓縮至 6% 以內
-    #2. 最新收盤價站上 20 日均線 (MA20)
-    #3. 最新收盤價距離布林上軌在 2% 以內
-    
     try:
-        # 確保 Close 欄位存在並轉換型態
         c_daily = df_daily['Close'].squeeze().astype(float)
-        
-        # 計算 20日均線 (MA20) 與標準差
         ma20 = c_daily.rolling(window=20).mean()
         std20 = c_daily.rolling(window=20).std()
         
-        # 簡化帶寬計算: (上軌 - 下軌) / MA20 = (4 * std20) / MA20
         bandwidth = (4 * std20) / ma20
         current_bw = bandwidth.iloc[-1]
         
-        # 取得最後一筆資料
         current_close = c_daily.iloc[-1]
         current_ma20 = ma20.iloc[-1]
         current_up_band = current_ma20 + (2 * std20.iloc[-1])
         
-        # 判斷條件
         cond_squeeze = current_bw <= 0.06
         cond_above_ma = current_close >= current_ma20
         cond_near_upper = ((current_up_band - current_close) / current_close) <= 0.02
         
         if cond_squeeze and cond_above_ma and cond_near_upper:
-            # 回傳 True 以及帶寬的百分比數值 (四捨五入到小數點後兩位，方便閱讀)
             return True, round(current_bw * 100, 2)
             
-    except Exception as e:
-        # 實務上可以考慮加上 print(e) 或 logging 方便未來除錯
+    except Exception:
         pass
         
-    # 失敗時統一回傳兩個值，避免主程式 unpacking 報錯
     return False, 0
 
 def check_strat6_undervalued(ticker):
@@ -311,8 +297,8 @@ if __name__ == "__main__":
         print("❌ 未能取得任何股票代碼，程式結束。")
         exit()
 
-    # ─── 【量能篩選門檻更新：調整為 1000 張】 ───
-    print(f"⏳ 步驟 1: 批次下載全市場日K資料進行量能過濾 (門檻：20日均量 &gt;= 1000張，共 {len(tech_scan_pool)} 檔)...")
+    # ─── 【量能篩選門檻：1000 張】 ───
+    print(f"⏳ 步驟 1: 批次下載全市場日K資料進行量能過濾 (門檻：20日均量 >= 1000張，共 {len(tech_scan_pool)} 檔)...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
     qualified_tickers = []
@@ -326,7 +312,6 @@ if __name__ == "__main__":
                 
             if len(v_daily) >= 20:
                 v_ma20_sheets = v_daily.rolling(window=20).mean().iloc[-1] / 1000
-                # 判斷門檻修改為 1000 張
                 if v_ma20_sheets >= 1000:
                     qualified_tickers.append(ticker)
         except Exception:
@@ -371,8 +356,11 @@ if __name__ == "__main__":
                     strat3_matches.append(stock_label)
                 if check_extreme_drop_volume_up(df_d):
                     strat4_matches.append(stock_label)
-                if check_strat5_tangling_ordered(df_m60, df_d, df_w):
-                    strat5_matches.append(stock_label)
+                
+                # ─── 【修正點 1：策略五呼叫邏輯更新】 ───
+                boll_check, bw_val = check_bollinger_squeeze_fast(df_d)
+                if boll_check:
+                    strat5_matches.append(f"{stock_label}[帶寬:{bw_val:.1f}%]")
                 
                 val_check = check_strat6_undervalued(ticker)
                 if val_check:
@@ -390,7 +378,7 @@ if __name__ == "__main__":
                 print(f"⚠️ 處理個股 {ticker} 時發生未預期錯誤: {e}")
                 continue
 
-    # 📝 建立 7 大策略綜合美化報告訊息 (TG 訊息內文的提示也同步更新為 1000張)
+    # 📝 建立 7 大策略綜合美化報告訊息
     tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 1000張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
     tw_msg += "───────────────────\n\n"
     
@@ -398,16 +386,17 @@ if __name__ == "__main__":
     tw_msg += "↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "📉 <b>【策略二】季線跌深負乖離 × KD金叉 (中線反彈)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的. 💤") + "\n\n"
+    tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "💎 <b>【策略三】時/日/週 全週期同步糾結 (不限排列)</b>\n"
     tw_msg += "↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "🔥 <b>【策略四】短線極限超賣 × 爆量紅K (恐慌止跌)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的. 💤") + "\n\n"
+    tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tw_msg += "🚀 <b>【策略五】同步均線糾結 × 多頭順序排列 (60K＞日K＞週K)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的. 💤") + "\n\n"
+    # ─── 【修正點 2：策略五 Telegram 標題更新】 ───
+    tw_msg += "🚀 <b>【策略五】布林軌道極致壓縮 (帶寬 ≤ 6% × 貼近上軌)</b>\n"
+    tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "💰 <b>【策略六】價值型低估股 (本益比 ≤ 12 × 股價淨值比 ≤ 1.0)</b>\n"
     tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
