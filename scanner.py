@@ -98,40 +98,37 @@ def calculate_rsi(close_series, period=6):
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
 
-def check_strat1_resonance(df_60m, df_daily, df_weekly):
-    """ 策略一：原版多週期三頻共振 (MACD) + KD低檔金叉 """
+def check_macd_up_and_kd_gold(df_single):
+    """ 單一週期判斷：MACD往0軸向上 + KD黃金交叉 """
     try:
-        c_60m = df_60m['Close'].squeeze().astype(float)
-        c_daily = df_daily['Close'].squeeze().astype(float)
-        c_weekly = df_weekly['Close'].squeeze().astype(float)
-        if c_60m.empty or c_daily.empty or c_weekly.empty: return False
-
-        w_macd, w_signal, w_hist = calculate_macd(c_weekly)
-        d_macd, d_signal, d_hist = calculate_macd(c_daily)
-        d_ma = c_daily.rolling(window=20).mean()
-        m60_macd, m60_signal, m60_hist = calculate_macd(c_60m)
-
-        if len(w_hist) < 1 or len(d_hist) < 1 or len(m60_hist) < 2: return False
-
-        w_m, w_s, w_h = float(w_macd.iloc[-1]), float(w_signal.iloc[-1]), float(w_hist.iloc[-1])
-        d_m, d_s, d_c, d_ma_val = float(d_macd.iloc[-1]), float(d_signal.iloc[-1]), float(c_daily.iloc[-1]), float(d_ma.iloc[-1])
-        m60_m, m60_h, m60_h_prev = float(m60_macd.iloc[-1]), float(m60_hist.iloc[-1]), float(m60_hist.iloc[-2])
-
-        macd_cond = (w_m > w_s) and (w_h > 0) and (d_m > 0) and (d_m > d_s) and (d_c > d_ma_val) and (m60_m > 0) and (m60_h > 0) and (m60_h_prev <= 0)
-        if not macd_cond: return False
-
-        k_60m, d_60m = calculate_kd(df_60m)
-        k_daily, d_daily = calculate_kd(df_daily)
-        k_weekly, d_weekly = calculate_kd(df_weekly)
+        if df_single.empty or len(df_single) < 26: return False
+        c = df_single['Close'].squeeze().astype(float)
         
-        def is_low_kd_gold(k_ser, d_ser, threshold=35):
-            if len(k_ser) < 2: return False
-            cross_up = (k_ser.iloc[-1] > d_ser.iloc[-1]) and (k_ser.iloc[-2] <= d_ser.iloc[-2])
-            is_low = (k_ser.iloc[-1] <= threshold) or (d_ser.iloc[-1] <= threshold)
-            return cross_up and is_low
+        # 1. MACD 計算
+        macd_line, signal_line, hist = calculate_macd(c)
+        if len(macd_line) < 2: return False
+        
+        # MACD條件：快線(DIF)向上升，且向0軸靠近或已在0軸之上 (或柱狀體翻紅遞增)
+        macd_up = (macd_line.iloc[-1] > macd_line.iloc[-2]) and (
+            macd_line.iloc[-1] >= 0 or (hist.iloc[-1] > hist.iloc[-2])
+        )
+        
+        # 2. KD 計算與金叉判斷
+        k_ser, d_ser = calculate_kd(df_single)
+        if len(k_ser) < 2: return False
+        
+        kd_gold = (k_ser.iloc[-1] > d_ser.iloc[-1]) and (k_ser.iloc[-2] <= d_ser.iloc[-2])
+        
+        return macd_up and kd_gold
+    except Exception:
+        return False
 
-        if is_low_kd_gold(k_60m, d_60m) and is_low_kd_gold(k_daily, d_daily) and is_low_kd_gold(k_weekly, d_weekly):
-            return True
+def check_strat1_resonance(df_30m, df_60m):
+    """ 策略一：30分K 與 60分K 同步 MACD往0軸向上 × KD黃金交叉 """
+    try:
+        cond_30m = check_macd_up_and_kd_gold(df_30m)
+        cond_60m = check_macd_up_and_kd_gold(df_60m)
+        return cond_30m and cond_60m
     except Exception:
         pass
     return False
@@ -322,7 +319,8 @@ if __name__ == "__main__":
     strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches = [], [], [], [], [], [], []
 
     if qualified_tickers:
-        print("⏳ 步驟 2: 批次下載精選股票的 60分K 與 週K 資料...")
+        print("⏳ 步驟 2: 批次下載精選股票的 30分K、60分K 與 週K 資料...")
+        full_df_30m = yf.download(qualified_tickers, period="1mo", interval="30m", progress=False, auto_adjust=True)
         full_df_60m = yf.download(qualified_tickers, period="1mo", interval="60m", progress=False, auto_adjust=True)
         full_df_weekly = yf.download(qualified_tickers, period="2y", interval="1wk", progress=False, auto_adjust=True)
 
@@ -331,25 +329,30 @@ if __name__ == "__main__":
             try:
                 if len(qualified_tickers) == 1:
                     df_d = full_df_daily.copy()
+                    df_m30 = full_df_30m.copy()
                     df_m60 = full_df_60m.copy()
                     df_w = full_df_weekly.copy()
                 else:
                     if ticker not in full_df_daily.columns.levels[1]: continue
+                    if ticker not in full_df_30m.columns.levels[1]: continue
                     if ticker not in full_df_60m.columns.levels[1]: continue
                     if ticker not in full_df_weekly.columns.levels[1]: continue
 
                     df_d = full_df_daily.xs(ticker, axis=1, level=1)
+                    df_m30 = full_df_30m.xs(ticker, axis=1, level=1)
                     df_m60 = full_df_60m.xs(ticker, axis=1, level=1)
                     df_w = full_df_weekly.xs(ticker, axis=1, level=1)
 
-                if df_d.empty or df_m60.empty or df_w.empty: 
+                if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty: 
                     continue
 
                 name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
                 stock_label = f"<code>{ticker}</code>(<i>{name_zh}</i>)" if name_zh else f"<code>{ticker}</code>"
 
-                if check_strat1_resonance(df_m60, df_d, df_w):
+                # ─── 【策略一：30分K + 60分K 共振檢測】 ───
+                if check_strat1_resonance(df_m30, df_m60):
                     strat1_matches.append(stock_label)
+                    
                 if check_oversold_rebound(df_d):
                     strat2_matches.append(stock_label)
                 if check_multi_timeframe_tangling(df_m60, df_d, df_w):
@@ -357,7 +360,7 @@ if __name__ == "__main__":
                 if check_extreme_drop_volume_up(df_d):
                     strat4_matches.append(stock_label)
                 
-                # ─── 【修正點 1：策略五呼叫邏輯更新】 ───
+                # ─── 【策略五：布林壓縮檢測】 ───
                 boll_check, bw_val = check_bollinger_squeeze_fast(df_d)
                 if boll_check:
                     strat5_matches.append(f"{stock_label}[帶寬:{bw_val:.1f}%]")
@@ -382,7 +385,8 @@ if __name__ == "__main__":
     tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 1000張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
     tw_msg += "───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】原版多週期三頻共振 (MACD + KD 低檔金叉)</b>\n"
+    # ─── 【策略一 Telegram 標題更新】 ───
+    tw_msg += "📈 <b>【策略一】30分K & 60分K 共振 (MACD 往0軸向上 + KD金叉)</b>\n"
     tw_msg += "↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "📉 <b>【策略二】季線跌深負乖離 × KD金叉 (中線反彈)</b>\n"
@@ -394,7 +398,6 @@ if __name__ == "__main__":
     tw_msg += "🔥 <b>【策略四】短線極限超賣 × 爆量紅K (恐慌止跌)</b>\n"
     tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
 
-    # ─── 【修正點 2：策略五 Telegram 標題更新】 ───
     tw_msg += "🚀 <b>【策略五】布林軌道極致壓縮 (帶寬 ≤ 6% × 貼近上軌)</b>\n"
     tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
 
