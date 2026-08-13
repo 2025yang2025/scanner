@@ -6,17 +6,15 @@ import time
 import random
 
 # ==============================================================================
-# 🇹🇼 台股全市場技術面與基本面模組 (解除產業限制，真正全市場納入)
+# 🇹🇼 台股全市場技術面模組 (解除產業限制，真正全市場納入)
 # ==============================================================================
 DYNAMIC_STOCK_NAMES = {}
-FUNDAMENTAL_DATA = {}  # 存放 P/E 和 P/B 資料
 
 def fetch_all_taiwan_market_tickers():
-    """ 下載全台股市場代碼（不限產業），並同步撈取證交所盤後估值資料 """
+    """ 下載全台股市場代碼（不限產業） """
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     all_tickers = []
     
-    # 1. 撈取全市場基本交易資料
     try:
         url_twse = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         res = requests.get(url_twse, headers=headers, timeout=10)
@@ -30,28 +28,6 @@ def fetch_all_taiwan_market_tickers():
                     DYNAMIC_STOCK_NAMES[ticker_id] = name
     except Exception as e:
         print(f"⚠️ 撈取全市場名單異常: {e}")
-
-    # 2. 撈取證交所官方個股本益比、股價淨值比 (每日盤後更新)
-    try:
-        url_valuation = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
-        res_val = requests.get(url_valuation, headers=headers, timeout=10)
-        if res_val.status_code == 200:
-            for item in res_val.json():
-                code = item.get("Code", "").strip()
-                ticker_id = f"{code}.TW"
-                
-                try:
-                    pe = float(item.get("PEratio", 0)) if item.get("PEratio") else 0.0
-                except:
-                    pe = 0.0
-                try:
-                    pb = float(item.get("PBRatio", 0)) if item.get("PBRatio") else 0.0
-                except:
-                    pb = 0.0
-                
-                FUNDAMENTAL_DATA[ticker_id] = {"PE": pe, "PB": pb}
-    except Exception as e:
-        print(f"⚠️ 撈取證交所估值資料異常: {e}")
 
     if not all_tickers:
         backup_dict = {"2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科"}
@@ -124,15 +100,23 @@ def check_macd_up_and_kd_gold(df_single):
         return False
 
 def check_strat1_resonance(df_30m, df_60m):
-    """ 策略一：30分K 與 60分K 同步 MACD往0軸向上 × KD黃金交叉 """
+    """ 策略一：30分K & 60分K 共振 (MACD 往0軸向上 + KD金叉) """
     try:
         return check_macd_up_and_kd_gold(df_30m) and check_macd_up_and_kd_gold(df_60m)
     except Exception:
         pass
     return False
 
-def check_strat2_resonance(df_daily, df_weekly):
-    """ 策略二（新）：日K 與 週K 同步 MACD往0軸向上 × KD黃金交叉 """
+def check_strat2_resonance(df_60m, df_daily):
+    """ 策略二：60分K & 日K 共振 (MACD 往0軸向上 + KD金叉) """
+    try:
+        return check_macd_up_and_kd_gold(df_60m) and check_macd_up_and_kd_gold(df_daily)
+    except Exception:
+        pass
+    return False
+
+def check_strat3_resonance(df_daily, df_weekly):
+    """ 策略三：日K & 週K 共振 (MACD 往0軸向上 + KD金叉) """
     try:
         return check_macd_up_and_kd_gold(df_daily) and check_macd_up_and_kd_gold(df_weekly)
     except Exception:
@@ -140,7 +124,7 @@ def check_strat2_resonance(df_daily, df_weekly):
     return False
 
 def check_volume_breakout(df_daily):
-    """ 策略三（新，原策略七）：關鍵均線多頭突破 × 量能倍增 (帶量突破) """
+    """ 策略四：關鍵均線多頭突破 × 量能倍增 (帶量突破) """
     try:
         if df_daily.empty or len(df_daily) < 20: return False
         
@@ -174,7 +158,7 @@ def check_volume_breakout(df_daily):
     return False
 
 def check_extreme_drop_volume_up(df_daily):
-    """ 策略四：短線極限超賣 × 爆量紅K """
+    """ 策略五：短線極限超賣 × 爆量紅K (恐慌止跌) """
     try:
         if df_daily.empty or len(df_daily) < 20: return False
         c_daily = df_daily['Close'].squeeze().astype(float)
@@ -193,46 +177,8 @@ def check_extreme_drop_volume_up(df_daily):
         pass
     return False
 
-def check_bollinger_squeeze_fast(df_daily):
-    """ 策略五：布林軌道極致壓縮 """
-    try:
-        c_daily = df_daily['Close'].squeeze().astype(float)
-        ma20 = c_daily.rolling(window=20).mean()
-        std20 = c_daily.rolling(window=20).std()
-        
-        bandwidth = (4 * std20) / ma20
-        current_bw = bandwidth.iloc[-1]
-        
-        current_close = c_daily.iloc[-1]
-        current_ma20 = ma20.iloc[-1]
-        current_up_band = current_ma20 + (2 * std20.iloc[-1])
-        
-        cond_squeeze = current_bw <= 0.06
-        cond_above_ma = current_close >= current_ma20
-        cond_near_upper = ((current_up_band - current_close) / current_close) <= 0.02
-        
-        if cond_squeeze and cond_above_ma and cond_near_upper:
-            return True, round(current_bw * 100, 2)
-            
-    except Exception:
-        pass
-        
-    return False, 0
-
-def check_strat6_undervalued(ticker):
-    """ 策略六：基本面價值型低估股 """
-    data = FUNDAMENTAL_DATA.get(ticker)
-    if not data: return False
-    
-    pe = data.get("PE", 0)
-    pb = data.get("PB", 0)
-    
-    if 0 < pe <= 12.0 and 0 < pb <= 1.0:
-        return True, pe, pb
-    return False
-
 def check_multi_timeframe_tangling(df_60m, df_daily, df_weekly):
-    """ 策略七（新，原策略三）：60分K/日K/週K同步均線糾結 """
+    """ 策略六：時/日/週 全週期同步糾結 (不限排列) """
     try:
         c_60m = df_60m['Close'].squeeze().astype(float)
         c_daily = df_daily['Close'].squeeze().astype(float)
@@ -276,7 +222,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股盤後 7 大策略全市場篩選報告】...")
+    print("🚀 啟動【台股盤後 6 大策略全市場篩選報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     
     if not tech_scan_pool:
@@ -305,7 +251,7 @@ if __name__ == "__main__":
 
     print(f"🎯 通過量能防線股票共 {len(qualified_tickers)} 檔。")
     
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches = [], [], [], [], [], [], []
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches = [], [], [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載精選股票的 30分K、60分K 與 週K 資料...")
@@ -338,38 +284,31 @@ if __name__ == "__main__":
                 name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
                 stock_label = f"<code>{ticker}</code>(<i>{name_zh}</i>)" if name_zh else f"<code>{ticker}</code>"
 
-                # 策略一：30分K + 60分K 共振
+                # 策略一：30分K & 60分K 共振
                 if check_strat1_resonance(df_m30, df_m60):
                     strat1_matches.append(stock_label)
                     
-                # 策略二：日K + 週K 共振
-                if check_strat2_resonance(df_d, df_w):
+                # 策略二：60分K & 日K 共振
+                if check_strat2_resonance(df_m60, df_d):
                     strat2_matches.append(stock_label)
 
-                # 策略三：帶量突破 (原策略七)
+                # 策略三：日K & 週K 共振
+                if check_strat3_resonance(df_d, df_w):
+                    strat3_matches.append(stock_label)
+
+                # 策略四：帶量突破
                 vol_breakout_check = check_volume_breakout(df_d)
                 if vol_breakout_check:
                     _, vol_ratio = vol_breakout_check
-                    strat3_matches.append(f"{stock_label}[量比:{vol_ratio:.1f}倍]")
+                    strat4_matches.append(f"{stock_label}[量比:{vol_ratio:.1f}倍]")
 
-                # 策略四：極限超賣爆量
+                # 策略五：極限超賣爆量
                 if check_extreme_drop_volume_up(df_d):
-                    strat4_matches.append(stock_label)
-                
-                # 策略五：布林壓縮
-                boll_check, bw_val = check_bollinger_squeeze_fast(df_d)
-                if boll_check:
-                    strat5_matches.append(f"{stock_label}[帶寬:{bw_val:.1f}%]")
-                
-                # 策略六：價值低估
-                val_check = check_strat6_undervalued(ticker)
-                if val_check:
-                    _, cur_pe, cur_pb = val_check
-                    strat6_matches.append(f"{stock_label}[PE:{cur_pe:.1f}, PB:{cur_pb:.2f}]")
+                    strat5_matches.append(stock_label)
 
-                # 策略七：全週期糾結 (原策略三)
+                # 策略六：全週期同步糾結
                 if check_multi_timeframe_tangling(df_m60, df_d, df_w):
-                    strat7_matches.append(stock_label)
+                    strat6_matches.append(stock_label)
 
             except KeyError:
                 continue
@@ -377,30 +316,27 @@ if __name__ == "__main__":
                 print(f"⚠️ 處理個股 {ticker} 時發生未預期錯誤: {e}")
                 continue
 
-    # 📝 建立 7 大策略綜合美化報告訊息
+    # 📝 建立 6 大策略綜合美化報告訊息
     tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 1000張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
     tw_msg += "───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】30分K & 60分K 共振 (MACD 往0軸向上 + KD金叉)</b>\n"
     tw_msg += "↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tw_msg += "📈 <b>【策略二】日K & 週K 共振 (MACD 往0軸向上 + KD金叉)</b>\n"
+    tw_msg += "📈 <b>【策略二】60分K & 日K 共振 (MACD 往0軸向上 + KD金叉)</b>\n"
     tw_msg += "↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tw_msg += "⚡ <b>【策略三】關鍵均線多頭突破 × 量能倍增 (帶量突破)</b>\n"
+    tw_msg += "📈 <b>【策略三】日K & 週K 共振 (MACD 往0軸向上 + KD金叉)</b>\n"
     tw_msg += "↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tw_msg += "🔥 <b>【策略四】短線極限超賣 × 爆量紅K (恐慌止跌)</b>\n"
+    tw_msg += "⚡ <b>【策略四】關鍵均線多頭突破 × 量能倍增 (帶量突破)</b>\n"
     tw_msg += "↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tw_msg += "🚀 <b>【策略五】布林軌道極致壓縮 (帶寬 ≤ 6% × 貼近上軌)</b>\n"
+    tw_msg += "🔥 <b>【策略五】短線極限超賣 × 爆量紅K (恐慌止跌)</b>\n"
     tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
 
-    tw_msg += "💰 <b>【策略六】價值型低估股 (本益比 ≤ 12 × 股價淨值比 ≤ 1.0)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
-
-    tw_msg += "💎 <b>【策略七】時/日/週 全週期同步糾結 (不限排列)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "💎 <b>【策略六】時/日/週 全週期同步糾結 (不限排列)</b>\n"
+    tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
-    print("✅ 台股多策略基本面綜合報告發送完畢！")
+    print("✅ 台股多策略綜合報告發送完畢！")
