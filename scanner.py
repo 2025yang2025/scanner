@@ -195,6 +195,47 @@ def check_multi_timeframe_tangling(df_60m, df_daily, df_weekly):
         pass
     return False
 
+def check_low_position_volume_surge(df_daily):
+    """ 策略七：低檔爆量股 (半年位階 ≤ 30% × 成交量 ≥ 2.5倍5日均量 × 紅K) """
+    try:
+        if df_daily.empty or len(df_daily) < 120: return False
+        
+        c_daily = df_daily['Close'].squeeze().astype(float)
+        o_daily = df_daily['Open'].squeeze().astype(float)
+        h_daily = df_daily['High'].squeeze().astype(float)
+        l_daily = df_daily['Low'].squeeze().astype(float)
+        v_daily = df_daily['Volume'].squeeze().astype(float)
+        
+        close_today = c_daily.iloc[-1]
+        open_today = o_daily.iloc[-1]
+        
+        # 1. 必須為紅 K
+        if close_today <= open_today:
+            return False
+            
+        # 2. 當日成交量 ≥ 2.5 倍 5日均量
+        v_ma5 = v_daily.rolling(window=5).mean().iloc[-1]
+        volume_today = v_daily.iloc[-1]
+        if v_ma5 == 0 or volume_today < (v_ma5 * 2.5):
+            return False
+            
+        # 3. 半年（以 120 個交易日計）價格位階 ≤ 30%
+        high_120 = h_daily.iloc[-120:].max()
+        low_120 = l_daily.iloc[-120:].min()
+        
+        if high_120 == low_120:
+            return False
+            
+        position = (close_today - low_120) / (high_120 - low_120)
+        
+        if position <= 0.30:
+            vol_ratio = volume_today / v_ma5
+            return True, round(position * 100, 1), round(vol_ratio, 1)
+            
+    except Exception:
+        pass
+    return False
+
 # ==============================================================================
 # 💬 Telegram 發送
 # ==============================================================================
@@ -222,7 +263,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股盤後 6 大策略全市場篩選報告】...")
+    print("🚀 啟動【台股盤後 7 大策略全市場篩選報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     
     if not tech_scan_pool:
@@ -251,7 +292,7 @@ if __name__ == "__main__":
 
     print(f"🎯 通過量能防線股票共 {len(qualified_tickers)} 檔。")
     
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches = [], [], [], [], [], []
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches = [], [], [], [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載精選股票的 30分K、60分K 與 週K 資料...")
@@ -310,13 +351,19 @@ if __name__ == "__main__":
                 if check_multi_timeframe_tangling(df_m60, df_d, df_w):
                     strat6_matches.append(stock_label)
 
+                # 策略七：低檔爆量股
+                low_vol_check = check_low_position_volume_surge(df_d)
+                if low_vol_check:
+                    _, pos_val, vol_r = low_vol_check
+                    strat7_matches.append(f"{stock_label}[位階:{pos_val}%|量比:{vol_r}倍]")
+
             except KeyError:
                 continue
             except Exception as e:
                 print(f"⚠️ 處理個股 {ticker} 時發生未預期錯誤: {e}")
                 continue
 
-    # 📝 建立 6 大策略綜合美化報告訊息
+    # 📝 建立 7 大策略綜合美化報告訊息
     tw_msg = f"🇹🇼 <b>【台股多策略選股報告】</b>\n⚠️ <i>已過濾 20日均量 &lt; 1000張之殭屍股</i>\n⏰ 時間: {tw_time_str}\n"
     tw_msg += "───────────────────\n\n"
     
@@ -336,7 +383,10 @@ if __name__ == "__main__":
     tw_msg += "↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
 
     tw_msg += "💎 <b>【策略六】時/日/週 全週期同步糾結 (不限排列)</b>\n"
-    tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
+
+    tw_msg += "💥 <b>【策略七】低檔爆量股 (半年位階 ≤ 30% × 成交量 ≥ 2.5倍5日均量 × 紅K)</b>\n"
+    tw_msg += "↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
     print("✅ 台股多策略綜合報告發送完畢！")
