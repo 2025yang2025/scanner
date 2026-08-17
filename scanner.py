@@ -5,7 +5,7 @@ import os
 import time
 
 # ==============================================================================
-# 🇹🇼 台股全市場技術面模组
+# 🇹🇼 台股全市場技術面模組
 # ==============================================================================
 DYNAMIC_STOCK_NAMES = {}
 
@@ -37,11 +37,11 @@ def fetch_all_taiwan_market_tickers():
     return sorted(list(set(all_tickers)))
 
 # ==============================================================================
-# 📊 第二階段：基本面二次過濾模組 (營收月增 > 0% 且 季增 > 0%)
+# 📊 策略八專用：營收月增季增雙增檢測
 # ==============================================================================
 def check_revenue_growth(ticker):
     """
-    對第一階段篩出標的進行營收過濾：
+    針對策略 1~7 篩出的候選股檢測：
     - 月增 (MoM): (當月營收 - 上月營收) / 上月營收 > 0%
     - 季增 (QoQ): (近3個月營收總和 - 前3個月營收總和) / 前3個月營收總和 > 0%
     """
@@ -108,7 +108,7 @@ def calculate_rsi(close_series, period=6):
     return rsi.fillna(50)
 
 # ==============================================================================
-# 🎯 核心策略檢測邏輯
+# 🎯 核心策略檢測邏輯 (1~7)
 # ==============================================================================
 def check_macd_up_and_kd_gold(df_single):
     try:
@@ -237,17 +237,17 @@ def send_telegram_message(message):
         print(f"❌ Telegram 發送異常: {e}")
 
 # ==============================================================================
-# 🚀 主程式 (兩階段流水線)
+# 🚀 主程式
 # ==============================================================================
 if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股兩階段選股流：先技術面 7 大策略 ➔ 再基本面營收雙增過濾】...")
+    print("🚀 啟動【台股 8 大策略全方位篩選報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
-    print(f"⏳ 預備階段: 批次下載全市場日K資料 (過濾 20日均量 < 1000張)...")
+    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾 20日均量 < 1000張)...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
     qualified_tickers = []
@@ -261,18 +261,16 @@ if __name__ == "__main__":
 
     print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
     
-    # --------------------------------------------------------------------------
-    # 🔍 第一階段：篩選符合 1~7 策略的標的，暫存至 technical_candidates
-    # --------------------------------------------------------------------------
-    technical_candidates = {}
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches, strat8_matches = [], [], [], [], [], [], [], []
+    tech_candidates_union = set()  # 儲存符合 1~7 策略的標的聯集
 
     if qualified_tickers:
-        print("⏳ 第一階段: 批次下載多週期 K 線資料 (30m, 60m, Weekly)...")
+        print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly)...")
         full_df_30m = yf.download(qualified_tickers, period="1mo", interval="30m", progress=False, auto_adjust=True)
         full_df_60m = yf.download(qualified_tickers, period="1mo", interval="60m", progress=False, auto_adjust=True)
         full_df_weekly = yf.download(qualified_tickers, period="2y", interval="1wk", progress=False, auto_adjust=True)
 
-        print("⏳ 第一階段: 執行 7 大技術面策略掃描...")
+        print("⏳ 步驟 3: 執行策略 1~7 技術面檢測...")
         for ticker in qualified_tickers:
             try:
                 df_d = full_df_daily.xs(ticker, axis=1, level=1)
@@ -282,63 +280,75 @@ if __name__ == "__main__":
 
                 if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty: continue
 
-                # 計算 7 大技術策略結果
-                s1 = check_strat1_resonance(df_m30, df_m60)
-                s2 = check_strat2_resonance(df_m60, df_d)
-                s3 = check_strat3_resonance(df_d, df_w)
-                s4 = check_volume_breakout(df_d)
-                s5 = check_extreme_drop_volume_up(df_d)
-                s6 = check_multi_timeframe_tangling(df_m60, df_d, df_w)
-                s7 = check_low_position_volume_surge(df_d)
+                name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
+                stock_label = f"<code>{ticker}</code>(<i>{name_zh}</i>)" if name_zh else f"<code>{ticker}</code>"
 
-                # 若符合任一策略，放入第一階段候選清單
-                if s1 or s2 or s3 or s4 or s5 or s6 or s7:
-                    technical_candidates[ticker] = {
-                        "s1": s1, "s2": s2, "s3": s3,
-                        "s4": s4, "s5": s5, "s6": s6, "s7": s7
-                    }
+                # 策略一
+                if check_strat1_resonance(df_m30, df_m60):
+                    strat1_matches.append(stock_label)
+                    tech_candidates_union.add(ticker)
+                    
+                # 策略二
+                if check_strat2_resonance(df_m60, df_d):
+                    strat2_matches.append(stock_label)
+                    tech_candidates_union.add(ticker)
+
+                # 策略三
+                if check_strat3_resonance(df_d, df_w):
+                    strat3_matches.append(stock_label)
+                    tech_candidates_union.add(ticker)
+
+                # 策略四
+                v_break = check_volume_breakout(df_d)
+                if v_break:
+                    strat4_matches.append(f"{stock_label}[量比:{v_break[1]:.1f}倍]")
+                    tech_candidates_union.add(ticker)
+
+                # 策略五
+                if check_extreme_drop_volume_up(df_d):
+                    strat5_matches.append(stock_label)
+                    tech_candidates_union.add(ticker)
+
+                # 策略六
+                if check_multi_timeframe_tangling(df_m60, df_d, df_w):
+                    strat6_matches.append(stock_label)
+                    tech_candidates_union.add(ticker)
+
+                # 策略七
+                low_vol = check_low_position_volume_surge(df_d)
+                if low_vol:
+                    strat7_matches.append(f"{stock_label}[位階:{low_vol[1]}%|量比:{low_vol[2]}倍]")
+                    tech_candidates_union.add(ticker)
 
             except Exception:
                 continue
 
-    print(f"💡 第一階段完成！符合 1~7 技術策略之標的共 {len(technical_candidates)} 檔。")
-
     # --------------------------------------------------------------------------
-    # 🔍 第二階段：從第一階段標的中，二次篩選營收「月增 > 0% 且 季增 > 0%」
+    # 🔍 步驟 4: 執行【策略八】(彙整 1~7 策略出的標的，過濾營收月增 > 0% 且 季增 > 0%)
     # --------------------------------------------------------------------------
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches = [], [], [], [], [], [], []
+    print(f"⏳ 步驟 4: 執行【策略八】(針對 1~7 策略共 {len(tech_candidates_union)} 檔技術標的進行營收雙增檢測)...")
+    for ticker in sorted(tech_candidates_union):
+        is_rev_pass, mom_val, qoq_val = check_revenue_growth(ticker)
+        time.sleep(0.1)  # 避免 API 觸發頻率限制
 
-    if technical_candidates:
-        print("⏳ 第二階段: 開始對技術面候選個股進行 FinMind 營收雙增二次過濾...")
-        for ticker, strats in technical_candidates.items():
-            is_rev_pass, mom_val, qoq_val = check_revenue_growth(ticker)
-            time.sleep(0.1) # 適度間隔保護 API
+        if is_rev_pass:
+            name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
+            label = f"<code>{ticker}</code>(<i>{name_zh}</i>)[月增:{mom_val}%|季增:{qoq_val}%]" if name_zh else f"<code>{ticker}</code>[月增:{mom_val}%|季增:{qoq_val}%]"
+            strat8_matches.append(label)
 
-            # 僅保留營收月增 > 0% 且 季增 > 0% 的標的
-            if is_rev_pass:
-                name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
-                stock_label = f"<code>{ticker}</code>(<i>{name_zh}</i>)[月增:{mom_val}%|季增:{qoq_val}%]" if name_zh else f"<code>{ticker}</code>[月增:{mom_val}%|季增:{qoq_val}%]"
-
-                if strats["s1"]: strat1_matches.append(stock_label)
-                if strats["s2"]: strat2_matches.append(stock_label)
-                if strats["s3"]: strat3_matches.append(stock_label)
-                if strats["s4"]: strat4_matches.append(f"{stock_label}(量比:{strats['s4'][1]:.1f}倍)")
-                if strats["s5"]: strat5_matches.append(stock_label)
-                if strats["s6"]: strat6_matches.append(stock_label)
-                if strats["s7"]: strat7_matches.append(f"{stock_label}(位階:{strats['s7'][1]}%|量比:{strats['s7'][2]}倍)")
-
-    # 📝 建立最終 Telegram 報告
-    tw_msg = f"🇹🇼 <b>【台股兩階段精選報告】</b>\n"
-    tw_msg += f"<i>階段一：7大技術策略 ➔ 階段二：營收雙增過濾 (月增&gt;0% &amp; 季增&gt;0%)</i>\n"
+    # 📝 建立 8 大策略完整 Telegram 報告
+    tw_msg = f"🇹🇼 <b>【台股盤後 8 大策略選股報告】</b>\n"
+    tw_msg += f"⚠️ <i>已自動過濾 20日均量 &lt; 1000張之低流動性股</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】30分K & 60分K 共振</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "第二階段無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】60分K & 日K 共振</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "第二階段無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K & 週K 共振</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "第二階段無符合標的。 💤") + "\n\n"
-    tw_msg += "⚡ <b>【策略四】帶量突破</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "第二階段無符合標的。 💤") + "\n\n"
-    tw_msg += "🔥 <b>【策略五】恐慌止跌 (極限超賣爆量)</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "第二階段無符合標的。 💤") + "\n\n"
-    tw_msg += "💎 <b>【策略六】全週期同步糾結</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "第二階段無符合標的。 💤") + "\n\n"
-    tw_msg += "💥 <b>【策略七】低檔爆量股</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "第二階段無符合標的。 💤") + "\n"
+    tw_msg += "📈 <b>【策略一】30分K & 60分K 共振</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】60分K & 日K 共振</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】日K & 週K 共振</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "⚡ <b>【策略四】帶量突破</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "🔥 <b>【策略五】恐慌止跌 (極限超賣爆量)</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "💎 <b>【策略六】全週期同步糾結</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "💥 <b>【策略七】低檔爆量股</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "🏆 <b>【策略八】技術精選 × 營收雙增 (策略1~7標的中 月增&gt;0% &amp; 季增&gt;0%)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "無符合營收雙增之標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
-    print("✅ 兩階段選股報告發送完畢！")
+    print("✅ 8 大策略選股報告發送完畢！")
