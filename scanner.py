@@ -37,13 +37,11 @@ def fetch_all_taiwan_market_tickers():
     return sorted(list(set(all_tickers)))
 
 # ==============================================================================
-# 📊 策略八專用：營收月增季增雙增檢測
+# 📊 策略八專用：營收月增檢測 (FinMind API)
 # ==============================================================================
-def check_revenue_growth(ticker):
+def check_revenue_mom_growth(ticker):
     """
-    針對策略 1~7 篩出的候選股檢測：
-    - 月增 (MoM): (當月營收 - 上月營收) / 上月營收 > 0%
-    - 季增 (QoQ): (近3個月營收總和 - 前3個月營收總和) / 前3個月營收總和 > 0%
+    針對 1~7 策略篩選出的標的檢測營收月增 (MoM > 0%)
     """
     try:
         code = ticker.split('.')[0]
@@ -52,24 +50,19 @@ def check_revenue_growth(ticker):
         
         if res.status_code == 200:
             data = res.json().get("data", [])
-            if len(data) >= 6:
+            if len(data) >= 2:
                 df_rev = pd.DataFrame(data).sort_values("date")
-                revs = df_rev['revenue'].tolist()[-6:]
+                revs = df_rev['revenue'].tolist()[-2:]
                 
-                # 1. 月增率計算 (MoM)
+                # 月增率計算 (MoM)
                 r0, r1 = revs[-1], revs[-2]
                 mom = ((r0 - r1) / r1) * 100 if r1 > 0 else 0
                 
-                # 2. 季增率計算 (QoQ)
-                s_recent = sum(revs[-3:])
-                s_prev = sum(revs[:3])
-                qoq = ((s_recent - s_prev) / s_prev) * 100 if s_prev > 0 else 0
-                
-                if mom > 0 and qoq > 0:
-                    return True, round(mom, 1), round(qoq, 1)
+                if mom > 0:
+                    return True, round(mom, 1)
     except Exception:
         pass
-    return False, 0.0, 0.0
+    return False, 0.0
 
 # ==============================================================================
 # 📈 技術面指標計算模組
@@ -216,26 +209,20 @@ def check_low_position_volume_surge(df_daily):
         pass
     return False
 
-import html
-
 # ==============================================================================
-# 💬 Telegram 發送（自動防護 400 錯誤：字數分段 + HTML 轉義）
+# 💬 Telegram 發送（自動切分長訊息避免超出字數）
 # ==============================================================================
 def send_telegram_message(message, max_length=3500):
     bot_token = os.environ.get("TG_BOT_TOKEN")
     chat_id = os.environ.get("TG_CHAT_ID")
-    if not bot_token or not chat_id:
-        print("⚠️ 未設定 TG_BOT_TOKEN 或 TG_CHAT_ID，跳過發送。")
-        return
+    if not bot_token or not chat_id: return
     
     bot_token = str(bot_token).strip()
     chat_id = str(chat_id).strip()
-    if bot_token.lower().startswith("bot"):
-        bot_token = bot_token[3:]
+    if bot_token.lower().startswith("bot"): bot_token = bot_token[3:]
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
-    # 若訊息長度超出限制，按行自動拆分為多封發送
     lines = message.split("\n")
     chunks = []
     current_chunk = ""
@@ -250,20 +237,14 @@ def send_telegram_message(message, max_length=3500):
         chunks.append(current_chunk)
 
     for idx, chunk in enumerate(chunks):
-        payload = {
-            "chat_id": chat_id,
-            "text": chunk,
-            "parse_mode": "HTML"
-        }
+        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
         try:
             res = requests.post(url, json=payload, timeout=10)
-            if res.status_code == 200:
-                print(f"📢 TG 發送成功 ({idx+1}/{len(chunks)})")
-            else:
-                print(f"❌ TG 發送失敗 ({idx+1}/{len(chunks)}), 狀態碼: {res.status_code}, 內文: {res.text}")
+            print(f"📢 TG 發送狀態碼 ({idx+1}/{len(chunks)}): {res.status_code}")
         except Exception as e:
             print(f"❌ Telegram 發送異常: {e}")
-        time.sleep(0.5) # 避免觸發 TG 發送頻率限制
+        time.sleep(0.5)
+
 # ==============================================================================
 # 🚀 主程式
 # ==============================================================================
@@ -290,7 +271,7 @@ if __name__ == "__main__":
     print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
     
     strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches, strat8_matches = [], [], [], [], [], [], [], []
-    tech_candidates_union = set()  # 儲存符合 1~7 策略的標的聯集
+    tech_candidates_union = set()  # 紀錄 1~7 策略出的所有標的
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly)...")
@@ -352,16 +333,16 @@ if __name__ == "__main__":
                 continue
 
     # --------------------------------------------------------------------------
-    # 🔍 步驟 4: 執行【策略八】(彙整 1~7 策略出的標的，過濾營收月增 > 0% 且 季增 > 0%)
+    # 🔍 步驟 4: 執行【策略八】(從 1~7 策略聯集出的標的，二次過濾營收月增 MoM > 0%)
     # --------------------------------------------------------------------------
-    print(f"⏳ 步驟 4: 執行【策略八】(針對 1~7 策略共 {len(tech_candidates_union)} 檔技術標的進行營收雙增檢測)...")
+    print(f"⏳ 步驟 4: 執行【策略八】(針對 1~7 策略共 {len(tech_candidates_union)} 檔技術標的進行營收月增檢測)...")
     for ticker in sorted(tech_candidates_union):
-        is_rev_pass, mom_val, qoq_val = check_revenue_growth(ticker)
-        time.sleep(0.1)  # 避免 API 觸發頻率限制
+        is_mom_pass, mom_val = check_revenue_mom_growth(ticker)
+        time.sleep(0.1)
 
-        if is_rev_pass:
+        if is_mom_pass:
             name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
-            label = f"<code>{ticker}</code>(<i>{name_zh}</i>)[月增:{mom_val}%|季增:{qoq_val}%]" if name_zh else f"<code>{ticker}</code>[月增:{mom_val}%|季增:{qoq_val}%]"
+            label = f"<code>{ticker}</code>(<i>{name_zh}</i>)[月增:{mom_val}%]" if name_zh else f"<code>{ticker}</code>[月增:{mom_val}%]"
             strat8_matches.append(label)
 
     # 📝 建立 8 大策略完整 Telegram 報告
@@ -376,7 +357,7 @@ if __name__ == "__main__":
     tw_msg += "🔥 <b>【策略五】恐慌止跌 (極限超賣爆量)</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "💎 <b>【策略六】全週期同步糾結</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "💥 <b>【策略七】低檔爆量股</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "🏆 <b>【策略八】技術精選 × 營收雙增 (策略1~7標的中 月增&gt;0% &amp; 季增&gt;0%)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "無符合營收雙增之標的。 💤") + "\n"
+    tw_msg += "🏆 <b>【策略八】技術精選 × 營收月增 (策略1~7標的中 月增&gt;0%)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "無符合營收月增之標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
     print("✅ 8 大策略選股報告發送完畢！")
