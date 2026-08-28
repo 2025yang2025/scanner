@@ -151,7 +151,7 @@ def check_volume_breakout(df_daily):
         
         k_series, d_series = calculate_kd(df_daily)
         if (k_series.iloc[-1] > d_series.iloc[-1]) and (k_series.iloc[-1] < 75):
-            return True, volume_today / v_ma5 if v_ma5 > 0 else 1.0
+            return True
     except Exception:
         pass
     return False
@@ -204,7 +204,7 @@ def check_low_position_volume_surge(df_daily):
         
         pos = (c_daily.iloc[-1] - low_120) / (high_120 - low_120)
         if pos <= 0.30:
-            return True, round(pos * 100, 1), round(v_daily.iloc[-1] / v_ma5, 1)
+            return True, round(pos * 100, 1)
     except Exception:
         pass
     return False
@@ -245,6 +245,14 @@ def send_telegram_message(message, max_length=3500):
             print(f"❌ Telegram 發送異常: {e}")
         time.sleep(0.5)
 
+# Helper: 格式化股票標籤（代號 + 名稱 + 股價）
+def format_stock_label(ticker, close_price):
+    name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
+    price_str = f"[{close_price:.1f}元]" if not pd.isna(close_price) else ""
+    if name_zh:
+        return f"<code>{ticker}</code>(<i>{name_zh}</i>){price_str}"
+    return f"<code>{ticker}</code>{price_str}"
+
 # ==============================================================================
 # 🚀 主程式
 # ==============================================================================
@@ -271,7 +279,7 @@ if __name__ == "__main__":
     print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
     
     strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat6_matches, strat7_matches, strat8_matches = [], [], [], [], [], [], [], []
-    tech_candidates_union = set()  # 紀錄 1~7 策略出的所有標的
+    tech_candidates_union = {}  # 紀錄 1~7 策略出的所有標的及其當下股價 {ticker: latest_price}
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly)...")
@@ -289,45 +297,44 @@ if __name__ == "__main__":
 
                 if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty: continue
 
-                name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
-                stock_label = f"<code>{ticker}</code>(<i>{name_zh}</i>)" if name_zh else f"<code>{ticker}</code>"
+                latest_price = float(df_d['Close'].squeeze().iloc[-1])
+                stock_label = format_stock_label(ticker, latest_price)
 
                 # 策略一
                 if check_strat1_resonance(df_m30, df_m60):
                     strat1_matches.append(stock_label)
-                    tech_candidates_union.add(ticker)
+                    tech_candidates_union[ticker] = latest_price
                     
                 # 策略二
                 if check_strat2_resonance(df_m60, df_d):
                     strat2_matches.append(stock_label)
-                    tech_candidates_union.add(ticker)
+                    tech_candidates_union[ticker] = latest_price
 
                 # 策略三
                 if check_strat3_resonance(df_d, df_w):
                     strat3_matches.append(stock_label)
-                    tech_candidates_union.add(ticker)
+                    tech_candidates_union[ticker] = latest_price
 
                 # 策略四
-                v_break = check_volume_breakout(df_d)
-                if v_break:
-                    strat4_matches.append(f"{stock_label}[量比:{v_break[1]:.1f}倍]")
-                    tech_candidates_union.add(ticker)
+                if check_volume_breakout(df_d):
+                    strat4_matches.append(stock_label)
+                    tech_candidates_union[ticker] = latest_price
 
                 # 策略五
                 if check_extreme_drop_volume_up(df_d):
                     strat5_matches.append(stock_label)
-                    tech_candidates_union.add(ticker)
+                    tech_candidates_union[ticker] = latest_price
 
                 # 策略六
                 if check_multi_timeframe_tangling(df_m60, df_d, df_w):
                     strat6_matches.append(stock_label)
-                    tech_candidates_union.add(ticker)
+                    tech_candidates_union[ticker] = latest_price
 
                 # 策略七
                 low_vol = check_low_position_volume_surge(df_d)
                 if low_vol:
-                    strat7_matches.append(f"{stock_label}[位階:{low_vol[1]}%|量比:{low_vol[2]}倍]")
-                    tech_candidates_union.add(ticker)
+                    strat7_matches.append(f"{stock_label}[位階:{low_vol[1]}%]")
+                    tech_candidates_union[ticker] = latest_price
 
             except Exception:
                 continue
@@ -336,13 +343,14 @@ if __name__ == "__main__":
     # 🔍 步驟 4: 執行【策略八】(從 1~7 策略聯集出的標的，二次過濾營收月增 MoM > 0%)
     # --------------------------------------------------------------------------
     print(f"⏳ 步驟 4: 執行【策略八】(針對 1~7 策略共 {len(tech_candidates_union)} 檔技術標的進行營收月增檢測)...")
-    for ticker in sorted(tech_candidates_union):
+    for ticker in sorted(tech_candidates_union.keys()):
         is_mom_pass, mom_val = check_revenue_mom_growth(ticker)
         time.sleep(0.1)
 
         if is_mom_pass:
+            price = tech_candidates_union[ticker]
             name_zh = DYNAMIC_STOCK_NAMES.get(ticker, "")
-            label = f"<code>{ticker}</code>(<i>{name_zh}</i>)[月增:{mom_val}%]" if name_zh else f"<code>{ticker}</code>[月增:{mom_val}%]"
+            label = f"<code>{ticker}</code>(<i>{name_zh}</i>)[{price:.1f}元 | 月增:{mom_val}%]" if name_zh else f"<code>{ticker}</code>[{price:.1f}元 | 月增:{mom_val}%]"
             strat8_matches.append(label)
 
     # 📝 建立 8 大策略完整 Telegram 報告
