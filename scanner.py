@@ -111,7 +111,7 @@ def check_macd_above_zero_and_kd_above(df_single, min_kd_val=30):
         return False
 
 def check_volume_breakout(df_daily):
-    """ 策略五：帶量突破 (原策略四) """
+    """ 策略五：帶量突破 """
     try:
         if df_daily.empty or len(df_daily) < 20: return False
         c_daily = df_daily['Close'].squeeze().astype(float)
@@ -206,8 +206,9 @@ if __name__ == "__main__":
     strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches = [], [], [], [], []
 
     if qualified_tickers:
-        print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, Weekly)...")
+        print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly)...")
         full_df_30m = yf.download(qualified_tickers, period="1mo", interval="30m", progress=False, auto_adjust=True)
+        full_df_60m = yf.download(qualified_tickers, period="1mo", interval="60m", progress=False, auto_adjust=True)
         full_df_weekly = yf.download(qualified_tickers, period="2y", interval="1wk", progress=False, auto_adjust=True)
 
         print("⏳ 步驟 3: 執行 5 大策略檢測...")
@@ -215,9 +216,10 @@ if __name__ == "__main__":
             try:
                 df_d = full_df_daily.xs(ticker, axis=1, level=1)
                 df_m30 = full_df_30m.xs(ticker, axis=1, level=1)
+                df_m60 = full_df_60m.xs(ticker, axis=1, level=1)
                 df_w = full_df_weekly.xs(ticker, axis=1, level=1)
 
-                if df_d.empty or df_m30.empty or df_w.empty: continue
+                if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty: continue
 
                 latest_price = float(df_d['Close'].squeeze().iloc[-1])
                 stock_label = format_stock_label(ticker, latest_price)
@@ -226,8 +228,8 @@ if __name__ == "__main__":
                 if check_macd_up_and_kd_above(df_m30, min_kd_val=20):
                     strat1_matches.append(stock_label)
 
-                # 策略二：30分K MACD趨向0軸向上 + KD > 20
-                if check_macd_up_and_kd_above(df_m30, min_kd_val=20):
+                # 策略二：60分K MACD趨向0軸向上 + KD > 20
+                if check_macd_up_and_kd_above(df_m60, min_kd_val=20):
                     strat2_matches.append(stock_label)
 
                 # 策略三：日K MACD趨向0軸向上 + KD > 50
@@ -238,7 +240,7 @@ if __name__ == "__main__":
                 if check_macd_above_zero_and_kd_above(df_w, min_kd_val=30):
                     strat4_matches.append(stock_label)
 
-                # 策略五：帶量突破 (原策略四)
+                # 策略五：帶量突破
                 if check_volume_breakout(df_d):
                     strat5_matches.append(stock_label)
 
@@ -251,7 +253,7 @@ if __name__ == "__main__":
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】30分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】30分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】60分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略三】日K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略四】週K MACD &gt; 0軸 & KD &gt; 30</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "⚡ <b>【策略五】帶量突破</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n"
