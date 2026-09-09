@@ -111,7 +111,7 @@ def check_macd_above_zero_and_kd_above(df_single, min_kd_val=30):
         return False
 
 def check_volume_breakout(df_daily):
-    """ 策略五：帶量突破 """
+    """ 策略七：帶量突破 """
     try:
         if df_daily.empty or len(df_daily) < 20: return False
         c_daily = df_daily['Close'].squeeze().astype(float)
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 5 大精簡策略選股報告】...")
+    print("🚀 啟動【台股 7 大順序策略選股報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
@@ -203,7 +203,11 @@ if __name__ == "__main__":
 
     print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
     
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches = [], [], [], [], []
+    # 紀錄原始代碼 (用來做交集比對)
+    set1, set2, set3, set4 = set(), set(), set(), set()
+    label_map = {} # 紀錄代號 -> 格式化輸出的名稱
+
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat7_matches = [], [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly)...")
@@ -211,7 +215,7 @@ if __name__ == "__main__":
         full_df_60m = yf.download(qualified_tickers, period="1mo", interval="60m", progress=False, auto_adjust=True)
         full_df_weekly = yf.download(qualified_tickers, period="2y", interval="1wk", progress=False, auto_adjust=True)
 
-        print("⏳ 步驟 3: 執行 5 大策略檢測...")
+        print("⏳ 步驟 3: 執行基礎策略檢測...")
         for ticker in qualified_tickers:
             try:
                 df_d = full_df_daily.xs(ticker, axis=1, level=1)
@@ -223,32 +227,46 @@ if __name__ == "__main__":
 
                 latest_price = float(df_d['Close'].squeeze().iloc[-1])
                 stock_label = format_stock_label(ticker, latest_price)
+                label_map[ticker] = stock_label
 
                 # 策略一：30分K MACD趨向0軸向上 + KD > 20
                 if check_macd_up_and_kd_above(df_m30, min_kd_val=20):
+                    set1.add(ticker)
                     strat1_matches.append(stock_label)
 
                 # 策略二：60分K MACD趨向0軸向上 + KD > 20
                 if check_macd_up_and_kd_above(df_m60, min_kd_val=20):
+                    set2.add(ticker)
                     strat2_matches.append(stock_label)
 
                 # 策略三：日K MACD趨向0軸向上 + KD > 50
                 if check_macd_up_and_kd_above(df_d, min_kd_val=50):
+                    set3.add(ticker)
                     strat3_matches.append(stock_label)
 
                 # 策略四：週K MACD 0軸以上 + KD > 30
                 if check_macd_above_zero_and_kd_above(df_w, min_kd_val=30):
+                    set4.add(ticker)
                     strat4_matches.append(stock_label)
 
-                # 策略五：帶量突破
+                # 策略七：帶量突破
                 if check_volume_breakout(df_d):
-                    strat5_matches.append(stock_label)
+                    strat7_matches.append(stock_label)
 
             except Exception:
                 continue
 
-    # 📝 建立 Telegram 報告內容
-    tw_msg = f"🇹🇼 <b>【台股盤後 5 大策略選股報告】</b>\n"
+    # --------------------------------------------------------------------------
+    # 🔍 步驟 4: 計算交集策略 (策略五 & 策略六)
+    # --------------------------------------------------------------------------
+    set5_intersection = sorted(list(set3 & set4)) # 策略三與策略四交集
+    set6_intersection = sorted(list(set1 & set2)) # 策略一與策略二交集
+
+    strat5_matches = [label_map[t] for t in set5_intersection if t in label_map]
+    strat6_matches = [label_map[t] for t in set6_intersection if t in label_map]
+
+    # 📝 建立 Telegram 報告內容 (1 至 7 順序輸出)
+    tw_msg = f"🇹🇼 <b>【台股盤後 7 大策略選股報告】</b>\n"
     tw_msg += f"⚠️ <i>已自動過濾 20日均量 &lt; 1000張之低流動性股</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
@@ -256,7 +274,9 @@ if __name__ == "__main__":
     tw_msg += "📈 <b>【策略二】60分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略三】日K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略四】週K MACD &gt; 0軸 & KD &gt; 30</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "⚡ <b>【策略五】帶量突破</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "🎯 <b>【策略五】中長線共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "🎯 <b>【策略六】短線共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "⚡ <b>【策略七】帶量突破</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
-    print("✅ 5 大精簡策略選股報告發送完畢！")
+    print("✅ 7 大策略選股報告發送完畢！")
