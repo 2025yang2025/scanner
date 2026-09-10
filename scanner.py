@@ -77,8 +77,8 @@ def check_above_ma5(df_daily):
 # ==============================================================================
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
-def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=30):
-    """ 策略1, 2, 3：MACD (DIF) > 0 且 KD 突破指定門檻 """
+def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
+    """ 策略1, 2, 3：MACD (DIF) > 0 且 KD 突破指定門檻 (預設 50) """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -98,7 +98,7 @@ def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=30):
         return False
 
 def check_macd_up_and_kd_above(df_single, min_kd_val=50):
-    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 """
+    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 (預設 50) """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 8 大策略選股報告（已移除月營收門檻）】...")
+    print("🚀 啟動【台股 8 大策略選股報告（KD50標準版）】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
@@ -248,18 +248,18 @@ if __name__ == "__main__":
                 stock_label = format_stock_label(ticker, latest_price)
                 label_map[ticker] = stock_label
 
-                # 策略一：月K MACD > 0 + KD 突破 30
-                if check_macd_above_zero_and_kd_breakthrough(df_m, target_kd=30):
+                # 策略一：月K MACD > 0 + KD 突破 50
+                if check_macd_above_zero_and_kd_breakthrough(df_m, target_kd=50):
                     set1.add(ticker)
                     strat1_matches.append(stock_label)
 
-                # 策略二：週K MACD > 0 + KD 突破 30
-                if check_macd_above_zero_and_kd_breakthrough(df_w, target_kd=30):
+                # 策略二：週K MACD > 0 + KD 突破 50
+                if check_macd_above_zero_and_kd_breakthrough(df_w, target_kd=50):
                     set2.add(ticker)
                     strat2_matches.append(stock_label)
 
-                # 策略三：日K MACD > 0 + KD 突破 20
-                if check_macd_above_zero_and_kd_breakthrough(df_d, target_kd=20):
+                # 策略三：日K MACD > 0 + KD 突破 50
+                if check_macd_above_zero_and_kd_breakthrough(df_d, target_kd=50):
                     set3.add(ticker)
                     strat3_matches.append(stock_label)
 
@@ -295,9 +295,9 @@ if __name__ == "__main__":
     tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 30</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 突破 30</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 20</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
