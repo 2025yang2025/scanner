@@ -48,7 +48,6 @@ def fetch_revenue_growth_tickers():
             data = res.json()
             for row in data:
                 code = row.get("公司代號", "").strip()
-                # 去年同期增減(%)
                 yoy_str = row.get("去年同期增減(%)", "0").replace(",", "").strip()
                 try:
                     yoy_val = float(yoy_str)
@@ -144,6 +143,38 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=50):
     except Exception:
         return False
 
+def check_strategy_8(df_m, df_w, df_d, df_m60, df_m30):
+    """ 策略八：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
+    try:
+        # 1. 月 K 與 週 K MACD (DIF) > 0
+        c_m = df_m['Close'].squeeze().astype(float)
+        c_w = df_w['Close'].squeeze().astype(float)
+        macd_m, _, _ = calculate_macd(c_m)
+        macd_w, _, _ = calculate_macd(c_w)
+        if macd_m.iloc[-1] <= 0 or macd_w.iloc[-1] <= 0: return False
+
+        # 2. 日 K 與 60K MACD 綠柱縮小 (柱狀體負值且遞增)
+        c_d = df_d['Close'].squeeze().astype(float)
+        c_m60 = df_m60['Close'].squeeze().astype(float)
+        _, _, hist_d = calculate_macd(c_d)
+        _, _, hist_m60 = calculate_macd(c_m60)
+
+        hist_d_shrinking = (hist_d.iloc[-1] < 0) and (hist_d.iloc[-1] > hist_d.iloc[-2])
+        hist_60m_shrinking = (hist_m60.iloc[-1] < 0) and (hist_m60.iloc[-1] > hist_m60.iloc[-2])
+        if not (hist_d_shrinking and hist_60m_shrinking): return False
+
+        # 3. 30K 股價下跌後反彈 (前一根下跌，最新一根收陽線反彈)
+        c_m30 = df_m30['Close'].squeeze().astype(float)
+        o_m30 = df_m30['Open'].squeeze().astype(float)
+        if len(c_m30) < 3: return False
+
+        prev_drop = c_m30.iloc[-2] < c_m30.iloc[-3]  # 前一根 30K 下跌
+        curr_rebound = c_m30.iloc[-1] > o_m30.iloc[-1] and c_m30.iloc[-1] > c_m30.iloc[-2]  # 當前 K 棒收紅且高於前一根收盤
+
+        return prev_drop and curr_rebound
+    except Exception:
+        return False
+
 # ==============================================================================
 # 💬 Telegram 發送模組
 # ==============================================================================
@@ -194,11 +225,10 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 7 大策略選股報告（含站上5日線 + 月營收成長）】...")
+    print("🚀 啟動【台股 8 大策略選股報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
-    # 抓取營收成長股票清單
     revenue_growth_pool = fetch_revenue_growth_tickers()
 
     print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾 20日均量 < 1000張 & 營收無成長)...")
@@ -207,11 +237,8 @@ if __name__ == "__main__":
     qualified_tickers = []
     for ticker in tech_scan_pool:
         try:
-            # 1. 營收成長過濾 (若API有抓到數據則進行過濾)
             if revenue_growth_pool and (ticker not in revenue_growth_pool):
                 continue
-                
-            # 2. 量能過濾
             v_daily = full_df_daily['Volume'].squeeze() if len(tech_scan_pool) == 1 else full_df_daily.xs(ticker, axis=1, level=1)['Volume'].squeeze()
             if len(v_daily) >= 20 and (v_daily.rolling(window=20).mean().iloc[-1] / 1000) >= 1000:
                 qualified_tickers.append(ticker)
@@ -220,10 +247,10 @@ if __name__ == "__main__":
 
     print(f"🎯 通過「量能 + 月營收成長」雙門檻股票共 {len(qualified_tickers)} 檔。")
     
-    set1, set2, set3, set4, set5 = set(), set(), set(), set(), set()
+    set1, set2, set3, set4, set5, set8 = set(), set(), set(), set(), set(), set()
     label_map = {}
 
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches = [], [], [], [], []
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat8_matches = [], [], [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly, Monthly)...")
@@ -275,6 +302,11 @@ if __name__ == "__main__":
                     set5.add(ticker)
                     strat5_matches.append(stock_label)
 
+                # 策略八：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 跌後反彈
+                if check_strategy_8(df_m, df_w, df_d, df_m60, df_m30):
+                    set8.add(ticker)
+                    strat8_matches.append(stock_label)
+
             except Exception:
                 continue
 
@@ -288,7 +320,7 @@ if __name__ == "__main__":
     strat7_matches = [label_map[t] for t in set7_intersection if t in label_map]
 
     # 📝 建立 Telegram 報告內容
-    tw_msg = f"🇹🇼 <b>【台股盤後 7 大策略選股報告】</b>\n"
+    tw_msg = f"🇹🇼 <b>【台股盤後 8 大策略選股報告】</b>\n"
     tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線 / 營收無成長</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
@@ -298,7 +330,8 @@ if __name__ == "__main__":
     tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "⚡ <b>【策略八】長多短急轉折 (月週MACD&gt;0 + 日60k綠柱縮 + 30k跌後反彈)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
-    print("✅ 7 大策略選股報告發送完畢！")
+    print("✅ 8 大策略選股報告發送完畢！")
