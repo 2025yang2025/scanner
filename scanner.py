@@ -64,6 +64,16 @@ def calculate_kd(df_single, n=9, m1=3, m2=3):
         
     return pd.Series(k_list, index=df_single.index), pd.Series(d_list, index=df_single.index)
 
+def check_above_ma5(df_daily):
+    """ 檢查日線是否站上 5 日均線 """
+    try:
+        c = df_daily['Close'].squeeze().astype(float)
+        if len(c) < 5: return False
+        ma5 = c.rolling(window=5).mean().iloc[-1]
+        return c.iloc[-1] >= ma5
+    except Exception:
+        return False
+
 # ==============================================================================
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
@@ -82,7 +92,7 @@ def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=30):
         k_ser, d_ser = calculate_kd(df_single)
         if len(k_ser) < 2: return False
         
-        # 2. KD 突破門檻：當前 K 棒高於目標值，且前一根小於等於目標值（突破）或剛好金叉於門檻之上
+        # 2. KD 突破門檻
         current_k = k_ser.iloc[-1]
         prev_k = k_ser.iloc[-2]
         
@@ -92,7 +102,7 @@ def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=30):
         return False
 
 def check_macd_up_and_kd_above(df_single, min_kd_val=50):
-    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 (預設為 50) """
+    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -100,7 +110,7 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=50):
         macd_line, signal_line, hist = calculate_macd(c)
         if len(macd_line) < 2: return False
         
-        # MACD 趨向 0 軸向上 (DIF 遞增或柱狀體遞增)
+        # MACD 趨向 0 軸向上
         macd_up = (macd_line.iloc[-1] > macd_line.iloc[-2]) and (
             macd_line.iloc[-1] >= 0 or (hist.iloc[-1] > hist.iloc[-2])
         )
@@ -108,7 +118,7 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=50):
         k_ser, d_ser = calculate_kd(df_single)
         if len(k_ser) < 1: return False
         
-        # KD 大於指定的門檻 (KD > 50)
+        # KD 大於指定的門檻
         kd_pass = (k_ser.iloc[-1] > min_kd_val) and (d_ser.iloc[-1] > min_kd_val)
         return macd_up and kd_pass
     except Exception:
@@ -164,7 +174,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 7 大策略選股報告】...")
+    print("🚀 啟動【台股 7 大策略選股報告（含站上5日線門檻）】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
@@ -205,31 +215,34 @@ if __name__ == "__main__":
 
                 if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty or df_m.empty: continue
 
+                # 共同前置條件：必須站上 5 日線
+                if not check_above_ma5(df_d): continue
+
                 latest_price = float(df_d['Close'].squeeze().iloc[-1])
                 stock_label = format_stock_label(ticker, latest_price)
                 label_map[ticker] = stock_label
 
-                # 策略一：月K MACD > 0 + KD 突破 30
+                # 策略一：月K MACD > 0 + KD 突破 30 (+ 站上5日線)
                 if check_macd_above_zero_and_kd_breakthrough(df_m, target_kd=30):
                     set1.add(ticker)
                     strat1_matches.append(stock_label)
 
-                # 策略二：週K MACD > 0 + KD 突破 30
+                # 策略二：週K MACD > 0 + KD 突破 30 (+ 站上5日線)
                 if check_macd_above_zero_and_kd_breakthrough(df_w, target_kd=30):
                     set2.add(ticker)
                     strat2_matches.append(stock_label)
 
-                # 策略三：日K MACD > 0 + KD 突破 20
+                # 策略三：日K MACD > 0 + KD 突破 20 (+ 站上5日線)
                 if check_macd_above_zero_and_kd_breakthrough(df_d, target_kd=20):
                     set3.add(ticker)
                     strat3_matches.append(stock_label)
 
-                # 策略四：60分K MACD趨向0軸向上 + KD > 50
+                # 策略四：60分K MACD趨向0軸向上 + KD > 50 (+ 站上5日線)
                 if check_macd_up_and_kd_above(df_m60, min_kd_val=50):
                     set4.add(ticker)
                     strat4_matches.append(stock_label)
 
-                # 策略五：30分K MACD趨向0軸向上 + KD > 50
+                # 策略五：30分K MACD趨向0軸向上 + KD > 50 (+ 站上5日線)
                 if check_macd_up_and_kd_above(df_m30, min_kd_val=50):
                     set5.add(ticker)
                     strat5_matches.append(stock_label)
@@ -248,14 +261,14 @@ if __name__ == "__main__":
 
     # 📝 建立 Telegram 報告內容
     tw_msg = f"🇹🇼 <b>【台股盤後 7 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已自動過濾 20日均量 &lt; 1000張之低流動性股</i>\n"
+    tw_msg += f"⚠️ <i>已過濾 20日均量 &lt; 1000張 & 未站上5日線標的</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 30</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 突破 30</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 20</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 30 (站上5日線)</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 突破 30 (站上5日線)</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 20 (站上5日線)</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50 (站上5日線)</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50 (站上5日線)</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n"
 
