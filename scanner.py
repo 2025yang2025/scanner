@@ -78,7 +78,7 @@ def check_above_ma5(df_daily):
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
 def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
-    """ 策略1, 2, 3：MACD (DIF) > 0 且 KD 突破指定門檻 (50) """
+    """ 策略1, 2 (KD突破50) / 策略3 (KD突破30) """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -97,8 +97,8 @@ def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
     except Exception:
         return False
 
-def check_macd_up_and_kd_above(df_single, min_kd_val=50):
-    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 (50) """
+def check_macd_up_and_kd_above(df_single, min_kd_val=30):
+    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 (30) """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -119,7 +119,7 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=50):
         return False
 
 def check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
-    """ 策略九（原策略八）：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
+    """ 策略九：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
     try:
         # 1. 月 K 與 週 K MACD (DIF) > 0
         c_m = df_m['Close'].squeeze().astype(float)
@@ -258,22 +258,22 @@ if __name__ == "__main__":
                     set2.add(ticker)
                     strat2_matches.append(stock_label)
 
-                # 策略三：日K MACD > 0 + KD 突破 50
-                if check_macd_above_zero_and_kd_breakthrough(df_d, target_kd=50):
+                # 策略三：日K MACD > 0 + KD 突破 30 (已調整為 30)
+                if check_macd_above_zero_and_kd_breakthrough(df_d, target_kd=30):
                     set3.add(ticker)
                     strat3_matches.append(stock_label)
 
-                # 策略四：60分K MACD趨向0軸向上 + KD > 50
-                if check_macd_up_and_kd_above(df_m60, min_kd_val=50):
+                # 策略四：60分K MACD趨向0軸向上 + KD > 30 (已調整為 30)
+                if check_macd_up_and_kd_above(df_m60, min_kd_val=30):
                     set4.add(ticker)
                     strat4_matches.append(stock_label)
 
-                # 策略五：30分K MACD趨向0軸向上 + KD > 50
-                if check_macd_up_and_kd_above(df_m30, min_kd_val=50):
+                # 策略五：30分K MACD趨向0軸向上 + KD > 30 (已調整為 30)
+                if check_macd_up_and_kd_above(df_m30, min_kd_val=30):
                     set5.add(ticker)
                     strat5_matches.append(stock_label)
 
-                # 策略九（原策略八）：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 跌後反彈
+                # 策略九：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 跌後反彈
                 if check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
                     set9.add(ticker)
                     strat9_matches.append(stock_label)
@@ -286,7 +286,7 @@ if __name__ == "__main__":
     # --------------------------------------------------------------------------
     set6_intersection = set3 & set4          # 策略六：日分時共振 (策略三 ∩ 策略四)
     set7_intersection = set1 & set2          # 策略七：長線趨勢共振 (策略一 ∩ 策略二)
-    set8_intersection = set6_intersection & set7_intersection # 策略八：全週期極致共振 (策略六 ∩ 策略七)
+    set8_intersection = set6_intersection & set7_intersection # 策略八：長短全週期共振 (策略六 ∩ 策略七)
 
     strat6_matches = [label_map[t] for t in sorted(list(set6_intersection)) if t in label_map]
     strat7_matches = [label_map[t] for t in sorted(list(set7_intersection)) if t in label_map]
@@ -299,9 +299,9 @@ if __name__ == "__main__":
     
     tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 30</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 30</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 30</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🔥 <b>【策略八】長短全週期共振 (策略六 ∩ 策略七)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "今日無符合標的。 💤") + "\n\n"
