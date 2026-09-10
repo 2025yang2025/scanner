@@ -78,7 +78,7 @@ def check_above_ma5(df_daily):
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
 def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
-    """ 策略1, 2, 3：MACD (DIF) > 0 且 KD 突破指定門檻 (預設 50) """
+    """ 策略1, 2, 3：MACD (DIF) > 0 且 KD 突破指定門檻 (50) """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -98,7 +98,7 @@ def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
         return False
 
 def check_macd_up_and_kd_above(df_single, min_kd_val=50):
-    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 (預設 50) """
+    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 指定值 (50) """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -118,8 +118,8 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=50):
     except Exception:
         return False
 
-def check_strategy_8(df_m, df_w, df_d, df_m60, df_m30):
-    """ 策略八：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
+def check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
+    """ 策略九（原策略八）：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
     try:
         # 1. 月 K 與 週 K MACD (DIF) > 0
         c_m = df_m['Close'].squeeze().astype(float)
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 8 大策略選股報告（KD50標準版）】...")
+    print("🚀 啟動【台股 9 大策略選股報告】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
@@ -218,10 +218,10 @@ if __name__ == "__main__":
 
     print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
     
-    set1, set2, set3, set4, set5, set8 = set(), set(), set(), set(), set(), set()
+    set1, set2, set3, set4, set5, set9 = set(), set(), set(), set(), set(), set()
     label_map = {}
 
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat8_matches = [], [], [], [], [], []
+    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat9_matches = [], [], [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly, Monthly)...")
@@ -273,25 +273,27 @@ if __name__ == "__main__":
                     set5.add(ticker)
                     strat5_matches.append(stock_label)
 
-                # 策略八：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 跌後反彈
-                if check_strategy_8(df_m, df_w, df_d, df_m60, df_m30):
-                    set8.add(ticker)
-                    strat8_matches.append(stock_label)
+                # 策略九（原策略八）：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 跌後反彈
+                if check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
+                    set9.add(ticker)
+                    strat9_matches.append(stock_label)
 
             except Exception:
                 continue
 
     # --------------------------------------------------------------------------
-    # 🔍 步驟 4: 計算重疊策略 (策略六 & 策略七)
+    # 🔍 步驟 4: 計算重疊策略 (策略六、策略七 & 策略八)
     # --------------------------------------------------------------------------
-    set6_intersection = sorted(list(set3 & set4)) # 策略三 ∩ 策略四
-    set7_intersection = sorted(list(set1 & set2)) # 策略一 ∩ 策略二
+    set6_intersection = set3 & set4          # 策略六：日分時共振 (策略三 ∩ 策略四)
+    set7_intersection = set1 & set2          # 策略七：長線趨勢共振 (策略一 ∩ 策略二)
+    set8_intersection = set6_intersection & set7_intersection # 策略八：全週期極致共振 (策略六 ∩ 策略七)
 
-    strat6_matches = [label_map[t] for t in set6_intersection if t in label_map]
-    strat7_matches = [label_map[t] for t in set7_intersection if t in label_map]
+    strat6_matches = [label_map[t] for t in sorted(list(set6_intersection)) if t in label_map]
+    strat7_matches = [label_map[t] for t in sorted(list(set7_intersection)) if t in label_map]
+    strat8_matches = [label_map[t] for t in sorted(list(set8_intersection)) if t in label_map]
 
     # 📝 建立 Telegram 報告內容
-    tw_msg = f"🇹🇼 <b>【台股盤後 8 大策略選股報告】</b>\n"
+    tw_msg = f"🇹🇼 <b>【台股盤後 9 大策略選股報告】</b>\n"
     tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
@@ -302,7 +304,8 @@ if __name__ == "__main__":
     tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "⚡ <b>【策略八】長多短急轉折 (月週MACD&gt;0 + 日60k綠柱縮 + 30k跌後反彈)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "🔥 <b>【策略八】長短全週期共振 (策略六 ∩ 策略七)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "⚡ <b>【策略九】長多短急轉折 (月週MACD&gt;0 + 日60k綠柱縮 + 30k跌後反彈)</b>\n↳ " + (", ".join(strat9_matches) if strat9_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
-    print("✅ 8 大策略選股報告發送完畢！")
+    print("✅ 9 大策略選股報告發送完畢！")
