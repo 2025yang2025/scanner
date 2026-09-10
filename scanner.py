@@ -5,7 +5,7 @@ import os
 import time
 
 # ==============================================================================
-# 🇹🇼 台股全市場資料與月營收模組
+# 🇹🇼 台股全市場資料模組
 # ==============================================================================
 DYNAMIC_STOCK_NAMES = {}
 
@@ -35,31 +35,6 @@ def fetch_all_taiwan_market_tickers():
             DYNAMIC_STOCK_NAMES[k] = v
             
     return sorted(list(set(all_tickers)))
-
-def fetch_revenue_growth_tickers():
-    """ 從證交所 OpenAPI 抓取最新月營收年增率 (YoY) > 0 的股票代碼 """
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    growth_tickers = set()
-    
-    try:
-        url = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
-        res = requests.get(url, headers=headers, timeout=12)
-        if res.status_code == 200:
-            data = res.json()
-            for row in data:
-                code = row.get("公司代號", "").strip()
-                yoy_str = row.get("去年同期增減(%)", "0").replace(",", "").strip()
-                try:
-                    yoy_val = float(yoy_str)
-                    if yoy_val > 0 and len(code) == 4:
-                        growth_tickers.add(f"{code}.TW")
-                except ValueError:
-                    continue
-            print(f"📊 成功獲取月營收年增長 (YoY > 0) 股票共 {len(growth_tickers)} 檔。")
-    except Exception as e:
-        print(f"⚠️ 撈取月營收數據異常 (不強制攔截): {e}")
-        
-    return growth_tickers
 
 # ==============================================================================
 # 📈 技術面指標計算模組
@@ -163,13 +138,13 @@ def check_strategy_8(df_m, df_w, df_d, df_m60, df_m30):
         hist_60m_shrinking = (hist_m60.iloc[-1] < 0) and (hist_m60.iloc[-1] > hist_m60.iloc[-2])
         if not (hist_d_shrinking and hist_60m_shrinking): return False
 
-        # 3. 30K 股價下跌後反彈 (前一根下跌，最新一根收陽線反彈)
+        # 3. 30K 股價下跌後反彈
         c_m30 = df_m30['Close'].squeeze().astype(float)
         o_m30 = df_m30['Open'].squeeze().astype(float)
         if len(c_m30) < 3: return False
 
-        prev_drop = c_m30.iloc[-2] < c_m30.iloc[-3]  # 前一根 30K 下跌
-        curr_rebound = c_m30.iloc[-1] > o_m30.iloc[-1] and c_m30.iloc[-1] > c_m30.iloc[-2]  # 當前 K 棒收紅且高於前一根收盤
+        prev_drop = c_m30.iloc[-2] < c_m30.iloc[-3]
+        curr_rebound = c_m30.iloc[-1] > o_m30.iloc[-1] and c_m30.iloc[-1] > c_m30.iloc[-2]
 
         return prev_drop and curr_rebound
     except Exception:
@@ -225,27 +200,23 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 8 大策略選股報告】...")
+    print("🚀 啟動【台股 8 大策略選股報告（已移除月營收門檻）】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
-    revenue_growth_pool = fetch_revenue_growth_tickers()
-
-    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾 20日均量 < 1000張 & 營收無成長)...")
+    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾 20日均量 < 1000張)...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
     qualified_tickers = []
     for ticker in tech_scan_pool:
         try:
-            if revenue_growth_pool and (ticker not in revenue_growth_pool):
-                continue
             v_daily = full_df_daily['Volume'].squeeze() if len(tech_scan_pool) == 1 else full_df_daily.xs(ticker, axis=1, level=1)['Volume'].squeeze()
             if len(v_daily) >= 20 and (v_daily.rolling(window=20).mean().iloc[-1] / 1000) >= 1000:
                 qualified_tickers.append(ticker)
         except Exception:
             continue
 
-    print(f"🎯 通過「量能 + 月營收成長」雙門檻股票共 {len(qualified_tickers)} 檔。")
+    print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
     
     set1, set2, set3, set4, set5, set8 = set(), set(), set(), set(), set(), set()
     label_map = {}
@@ -321,7 +292,7 @@ if __name__ == "__main__":
 
     # 📝 建立 Telegram 報告內容
     tw_msg = f"🇹🇼 <b>【台股盤後 8 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線 / 營收無成長</i>\n"
+    tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 30</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
