@@ -77,8 +77,13 @@ def check_above_ma5(df_daily):
 # ==============================================================================
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
-def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
-    """ 策略1, 2, 3：MACD (DIF) > 0 且 KD 突破 50 """
+def check_kd_golden_cross(k_ser, d_ser):
+    """ 檢測 KD 是否黃金交叉 (前一期 K <= D 且 當期 K > D) """
+    if len(k_ser) < 2 or len(d_ser) < 2: return False
+    return (k_ser.iloc[-2] <= d_ser.iloc[-2]) and (k_ser.iloc[-1] > d_ser.iloc[-1])
+
+def check_strat_1_2(df_single):
+    """ 策略1, 2：MACD > 0 且 KD 黃金交叉向上 """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -87,13 +92,27 @@ def check_macd_above_zero_and_kd_breakthrough(df_single, target_kd=50):
         if len(macd_line) < 1 or macd_line.iloc[-1] <= 0: return False
         
         k_ser, d_ser = calculate_kd(df_single)
-        if len(k_ser) < 2: return False
+        return check_kd_golden_cross(k_ser, d_ser)
+    except Exception:
+        return False
+
+def check_strat_3(df_single):
+    """ 策略三：MACD 趨向 0 軸向上 且 KD 黃金交叉向上 """
+    try:
+        if df_single.empty or len(df_single) < 26: return False
+        c = df_single['Close'].squeeze().astype(float)
         
-        current_k = k_ser.iloc[-1]
-        prev_k = k_ser.iloc[-2]
+        macd_line, _, hist = calculate_macd(c)
+        if len(macd_line) < 2: return False
         
-        kd_breakthrough = (current_k > target_kd) and (prev_k <= target_kd or current_k > d_ser.iloc[-1])
-        return kd_breakthrough
+        # MACD 趨向 0 軸向上 (DIF 遞增 或 柱狀體遞增/綠柱縮小)
+        macd_up = (macd_line.iloc[-1] > macd_line.iloc[-2]) and (
+            macd_line.iloc[-1] >= 0 or (hist.iloc[-1] > hist.iloc[-2])
+        )
+        if not macd_up: return False
+        
+        k_ser, d_ser = calculate_kd(df_single)
+        return check_kd_golden_cross(k_ser, d_ser)
     except Exception:
         return False
 
@@ -103,7 +122,7 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=50):
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
         
-        macd_line, signal_line, hist = calculate_macd(c)
+        macd_line, _, hist = calculate_macd(c)
         if len(macd_line) < 2: return False
         
         macd_up = (macd_line.iloc[-1] > macd_line.iloc[-2]) and (
@@ -248,27 +267,27 @@ if __name__ == "__main__":
                 stock_label = format_stock_label(ticker, latest_price)
                 label_map[ticker] = stock_label
 
-                # 策略一：月K MACD > 0 + KD 突破 50
-                if check_macd_above_zero_and_kd_breakthrough(df_m, target_kd=50):
+                # 策略一：月K MACD > 0 & KD 黃金交叉向上
+                if check_strat_1_2(df_m):
                     set1.add(ticker)
                     strat1_matches.append(stock_label)
 
-                # 策略二：週K MACD > 0 + KD 突破 50
-                if check_macd_above_zero_and_kd_breakthrough(df_w, target_kd=50):
+                # 策略二：週K MACD > 0 & KD 黃金交叉向上
+                if check_strat_1_2(df_w):
                     set2.add(ticker)
                     strat2_matches.append(stock_label)
 
-                # 策略三：日K MACD > 0 + KD 突破 50
-                if check_macd_above_zero_and_kd_breakthrough(df_d, target_kd=50):
+                # 策略三：日K MACD 趨向 0 軸向上 & KD 黃金交叉向上
+                if check_strat_3(df_d):
                     set3.add(ticker)
                     strat3_matches.append(stock_label)
 
-                # 策略四：60分K MACD趨向0軸向上 + KD > 50
+                # 策略四：60分K MACD趨向0軸向上 & KD > 50
                 if check_macd_up_and_kd_above(df_m60, min_kd_val=50):
                     set4.add(ticker)
                     strat4_matches.append(stock_label)
 
-                # 策略五：30分K MACD趨向0軸向上 + KD > 50
+                # 策略五：30分K MACD趨向0軸向上 & KD > 50
                 if check_macd_up_and_kd_above(df_m30, min_kd_val=50):
                     set5.add(ticker)
                     strat5_matches.append(stock_label)
@@ -297,9 +316,9 @@ if __name__ == "__main__":
     tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD 突破 50</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】日K MACD 趨向0軸向上 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
