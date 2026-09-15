@@ -64,16 +64,6 @@ def calculate_kd(df_single, n=9, m1=3, m2=3):
         
     return pd.Series(k_list, index=df_single.index), pd.Series(d_list, index=df_single.index)
 
-def check_above_ma5(df_daily):
-    """ 檢查日線是否站上 5 日均線 """
-    try:
-        c = df_daily['Close'].squeeze().astype(float)
-        if len(c) < 5: return False
-        ma5 = c.rolling(window=5).mean().iloc[-1]
-        return c.iloc[-1] >= ma5
-    except Exception:
-        return False
-
 # ==============================================================================
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
@@ -260,9 +250,6 @@ if __name__ == "__main__":
 
                 if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty or df_m.empty: continue
 
-                # 技術面前置條件：必須站上 5 日線
-                if not check_above_ma5(df_d): continue
-
                 latest_price = float(df_d['Close'].squeeze().iloc[-1])
                 stock_label = format_stock_label(ticker, latest_price)
                 label_map[ticker] = stock_label
@@ -313,7 +300,7 @@ if __name__ == "__main__":
 
     # 📝 建立 Telegram 報告內容
     tw_msg = f"🇹🇼 <b>【台股盤後 9 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張 / 未站上5日線</i>\n"
+    tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
