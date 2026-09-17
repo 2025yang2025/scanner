@@ -213,19 +213,20 @@ if __name__ == "__main__":
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
-    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾 20日均量 < 1000張)...")
+    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾當日成交量 < 1000張)...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
     qualified_tickers = []
     for ticker in tech_scan_pool:
         try:
             v_daily = full_df_daily['Volume'].squeeze() if len(tech_scan_pool) == 1 else full_df_daily.xs(ticker, axis=1, level=1)['Volume'].squeeze()
-            if len(v_daily) >= 20 and (v_daily.rolling(window=20).mean().iloc[-1] / 1000) >= 1000:
+            # 修改處：由原本的 20日均量改為「當日成交量 >= 1000張」
+            if len(v_daily) >= 1 and (v_daily.iloc[-1] >= 1000000):  # yfinance 量能單位為股數，1000張 = 1,000,000股
                 qualified_tickers.append(ticker)
         except Exception:
             continue
 
-    print(f"🎯 通過量能門檻股票共 {len(qualified_tickers)} 檔。")
+    print(f"🎯 通過當日成交量門檻股票共 {len(qualified_tickers)} 檔。")
     
     set1, set2, set3, set4, set5, set9 = set(), set(), set(), set(), set(), set()
     label_map = {}
@@ -300,7 +301,7 @@ if __name__ == "__main__":
 
     # 📝 建立 Telegram 報告內容
     tw_msg = f"🇹🇼 <b>【台股盤後 9 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已過濾：20日均量 &lt; 1000張</i>\n"
+    tw_msg += f"⚠️ <i>已過濾：當日成交量 &lt; 1000張</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
