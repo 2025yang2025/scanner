@@ -67,13 +67,8 @@ def calculate_kd(df_single, n=9, m1=3, m2=3):
 # ==============================================================================
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
-def check_kd_golden_cross(k_ser, d_ser):
-    """ 檢測 KD 是否黃金交叉 (前一期 K <= D 且 當期 K > D) """
-    if len(k_ser) < 2 or len(d_ser) < 2: return False
-    return (k_ser.iloc[-2] <= d_ser.iloc[-2]) and (k_ser.iloc[-1] > d_ser.iloc[-1])
-
-def check_strat_1_2(df_single):
-    """ 策略1, 2：MACD > 0 且 KD 黃金交叉向上 """
+def check_macd_gt_zero_and_kd_above(df_single, min_kd_val=20):
+    """ 策略一、二、三：MACD > 0 且 KD > min_kd_val """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -82,12 +77,14 @@ def check_strat_1_2(df_single):
         if len(macd_line) < 1 or macd_line.iloc[-1] <= 0: return False
         
         k_ser, d_ser = calculate_kd(df_single)
-        return check_kd_golden_cross(k_ser, d_ser)
+        if len(k_ser) < 1: return False
+        
+        return (k_ser.iloc[-1] > min_kd_val) and (d_ser.iloc[-1] > min_kd_val)
     except Exception:
         return False
 
-def check_strat_3(df_single):
-    """ 策略三：MACD 趨向 0 軸向上 且 KD 黃金交叉向上 """
+def check_macd_up_and_kd_above(df_single, min_kd_val=20):
+    """ 策略四、五：MACD 趨向 0 軸向上 且 KD > min_kd_val """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -102,28 +99,9 @@ def check_strat_3(df_single):
         if not macd_up: return False
         
         k_ser, d_ser = calculate_kd(df_single)
-        return check_kd_golden_cross(k_ser, d_ser)
-    except Exception:
-        return False
-
-def check_macd_up_and_kd_above(df_single, min_kd_val=50):
-    """ 策略4, 5：MACD 趨向 0 軸向上 + KD > 50 """
-    try:
-        if df_single.empty or len(df_single) < 26: return False
-        c = df_single['Close'].squeeze().astype(float)
-        
-        macd_line, _, hist = calculate_macd(c)
-        if len(macd_line) < 2: return False
-        
-        macd_up = (macd_line.iloc[-1] > macd_line.iloc[-2]) and (
-            macd_line.iloc[-1] >= 0 or (hist.iloc[-1] > hist.iloc[-2])
-        )
-        
-        k_ser, d_ser = calculate_kd(df_single)
         if len(k_ser) < 1: return False
         
-        kd_pass = (k_ser.iloc[-1] > min_kd_val) and (d_ser.iloc[-1] > min_kd_val)
-        return macd_up and kd_pass
+        return (k_ser.iloc[-1] > min_kd_val) and (d_ser.iloc[-1] > min_kd_val)
     except Exception:
         return False
 
@@ -213,15 +191,14 @@ if __name__ == "__main__":
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
-    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾當日成交量 < 1000張)...")
+    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾當日成交量 < 2500張)...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
     qualified_tickers = []
     for ticker in tech_scan_pool:
         try:
             v_daily = full_df_daily['Volume'].squeeze() if len(tech_scan_pool) == 1 else full_df_daily.xs(ticker, axis=1, level=1)['Volume'].squeeze()
-            # 修改處：由原本的 20日均量改為「當日成交量 >= 1000張」
-            if len(v_daily) >= 1 and (v_daily.iloc[-1] >= 1000000):  # yfinance 量能單位為股數，1000張 = 1,000,000股
+            if len(v_daily) >= 1 and (v_daily.iloc[-1] >= 2500000): # 2,500張
                 qualified_tickers.append(ticker)
         except Exception:
             continue
@@ -255,28 +232,28 @@ if __name__ == "__main__":
                 stock_label = format_stock_label(ticker, latest_price)
                 label_map[ticker] = stock_label
 
-                # 策略一：月K MACD > 0 & KD 黃金交叉向上
-                if check_strat_1_2(df_m):
+                # 策略一：月K MACD > 0 & KD > 20
+                if check_macd_gt_zero_and_kd_above(df_m, min_kd_val=20):
                     set1.add(ticker)
                     strat1_matches.append(stock_label)
 
-                # 策略二：週K MACD > 0 & KD 黃金交叉向上
-                if check_strat_1_2(df_w):
+                # 策略二：週K MACD > 0 & KD > 50
+                if check_macd_gt_zero_and_kd_above(df_w, min_kd_val=50):
                     set2.add(ticker)
                     strat2_matches.append(stock_label)
 
-                # 策略三：日K MACD 趨向 0 軸向上 & KD 黃金交叉向上
-                if check_strat_3(df_d):
+                # 策略三：日K MACD > 0 & KD > 20
+                if check_macd_gt_zero_and_kd_above(df_d, min_kd_val=20):
                     set3.add(ticker)
                     strat3_matches.append(stock_label)
 
-                # 策略四：60分K MACD趨向0軸向上 & KD > 50
-                if check_macd_up_and_kd_above(df_m60, min_kd_val=50):
+                # 策略四：60分K MACD趨向0軸向上 & KD > 20
+                if check_macd_up_and_kd_above(df_m60, min_kd_val=20):
                     set4.add(ticker)
                     strat4_matches.append(stock_label)
 
-                # 策略五：30分K MACD趨向0軸向上 & KD > 50
-                if check_macd_up_and_kd_above(df_m30, min_kd_val=50):
+                # 策略五：30分K MACD趨向0軸向上 & KD > 20
+                if check_macd_up_and_kd_above(df_m30, min_kd_val=20):
                     set5.add(ticker)
                     strat5_matches.append(stock_label)
 
@@ -301,14 +278,14 @@ if __name__ == "__main__":
 
     # 📝 建立 Telegram 報告內容
     tw_msg = f"🇹🇼 <b>【台股盤後 9 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已過濾：當日成交量 &lt; 1000張</i>\n"
+    tw_msg += f"⚠️ <i>已過濾：當日成交量 &lt; 2500張</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K MACD 趨向0軸向上 & KD 黃金交叉向上</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 50</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD &gt; 20</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD &gt; 50</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD &gt; 20</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
     tw_msg += "🔥 <b>【策略八】長短全週期共振 (策略六 ∩ 策略七)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "今日無符合標的。 💤") + "\n\n"
