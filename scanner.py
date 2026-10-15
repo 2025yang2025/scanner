@@ -64,6 +64,16 @@ def calculate_kd(df_single, n=9, m1=3, m2=3):
         
     return pd.Series(k_list, index=df_single.index), pd.Series(d_list, index=df_single.index)
 
+def check_above_ma60(df_daily):
+    """ 檢查日線是否站上 60 日均線（季線） """
+    try:
+        c = df_daily['Close'].squeeze().astype(float)
+        if len(c) < 60: return False
+        ma60 = c.rolling(window=60).mean().iloc[-1]
+        return c.iloc[-1] >= ma60
+    except Exception:
+        return False
+
 # ==============================================================================
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
@@ -187,7 +197,7 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 9 大策略選股報告】...")
+    print("🚀 啟動【台股 9 大策略選股報告（含站上季線門檻）】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
@@ -227,6 +237,9 @@ if __name__ == "__main__":
                 df_m = full_df_monthly.xs(ticker, axis=1, level=1)
 
                 if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty or df_m.empty: continue
+
+                # 新增前置過濾條件：必須站上 60 日線 (季線)
+                if not check_above_ma60(df_d): continue
 
                 latest_price = float(df_d['Close'].squeeze().iloc[-1])
                 stock_label = format_stock_label(ticker, latest_price)
@@ -278,7 +291,7 @@ if __name__ == "__main__":
 
     # 📝 建立 Telegram 報告內容
     tw_msg = f"🇹🇼 <b>【台股盤後 9 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已過濾：當日成交量 &lt; 2500張</i>\n"
+    tw_msg += f"⚠️ <i>已過濾：當日成交量 &lt; 2500張 / 未站上季線(MA60)</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
     tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD &gt; 20</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
