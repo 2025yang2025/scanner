@@ -78,7 +78,7 @@ def check_above_ma60(df_daily):
 # 🎯 核心策略檢測邏輯
 # ==============================================================================
 def check_macd_gt_zero_and_kd_above(df_single, min_kd_val=20):
-    """ 策略一、二、三：MACD > 0 且 KD > min_kd_val """
+    """ 檢測 MACD > 0 且 KD > min_kd_val """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -94,7 +94,7 @@ def check_macd_gt_zero_and_kd_above(df_single, min_kd_val=20):
         return False
 
 def check_macd_up_and_kd_above(df_single, min_kd_val=20):
-    """ 策略四、五：MACD 趨向 0 軸向上 且 KD > min_kd_val """
+    """ 檢測 MACD 趨向 0 軸向上 且 KD > min_kd_val """
     try:
         if df_single.empty or len(df_single) < 26: return False
         c = df_single['Close'].squeeze().astype(float)
@@ -102,7 +102,6 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=20):
         macd_line, _, hist = calculate_macd(c)
         if len(macd_line) < 2: return False
         
-        # MACD 趨向 0 軸向上 (DIF 遞增 或 柱狀體遞增/綠柱縮小)
         macd_up = (macd_line.iloc[-1] > macd_line.iloc[-2]) and (
             macd_line.iloc[-1] >= 0 or (hist.iloc[-1] > hist.iloc[-2])
         )
@@ -115,17 +114,15 @@ def check_macd_up_and_kd_above(df_single, min_kd_val=20):
     except Exception:
         return False
 
-def check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
-    """ 策略九：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
+def check_short_reversal(df_m, df_w, df_d, df_m60, df_m30):
+    """ 長多短急轉折：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 股價下跌反彈 """
     try:
-        # 1. 月 K 與 週 K MACD (DIF) > 0
         c_m = df_m['Close'].squeeze().astype(float)
         c_w = df_w['Close'].squeeze().astype(float)
         macd_m, _, _ = calculate_macd(c_m)
         macd_w, _, _ = calculate_macd(c_w)
         if macd_m.iloc[-1] <= 0 or macd_w.iloc[-1] <= 0: return False
 
-        # 2. 日 K 與 60K MACD 綠柱縮小 (柱狀體負值且遞增)
         c_d = df_d['Close'].squeeze().astype(float)
         c_m60 = df_m60['Close'].squeeze().astype(float)
         _, _, hist_d = calculate_macd(c_d)
@@ -135,7 +132,6 @@ def check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
         hist_60m_shrinking = (hist_m60.iloc[-1] < 0) and (hist_m60.iloc[-1] > hist_m60.iloc[-2])
         if not (hist_d_shrinking and hist_60m_shrinking): return False
 
-        # 3. 30K 股價下跌後反彈
         c_m30 = df_m30['Close'].squeeze().astype(float)
         o_m30 = df_m30['Open'].squeeze().astype(float)
         if len(c_m30) < 3: return False
@@ -197,28 +193,30 @@ if __name__ == "__main__":
     now_tw = pd.Timestamp.now(tz='UTC').tz_convert('Asia/Taipei')
     tw_time_str = now_tw.strftime('%Y-%m-%d %H:%M:%S')
 
-    print("🚀 啟動【台股 9 大策略選股報告（含站上季線門檻）】...")
+    print("🚀 啟動【台股盤後選股報告（5000張 + 季線 + 月週長多前置過濾）】...")
     tech_scan_pool = fetch_all_taiwan_market_tickers()
     if not tech_scan_pool: exit()
 
-    print(f"⏳ 步驟 1: 下載全市場日K數據 (過濾當日成交量 < 2500張)...")
+    print("⏳ 步驟 1: 下載全市場日K數據，過濾當日成交量 < 5000張 & 未站上季線...")
     full_df_daily = yf.download(tech_scan_pool, period="1y", interval="1d", progress=False, auto_adjust=True)
     
     qualified_tickers = []
     for ticker in tech_scan_pool:
         try:
-            v_daily = full_df_daily['Volume'].squeeze() if len(tech_scan_pool) == 1 else full_df_daily.xs(ticker, axis=1, level=1)['Volume'].squeeze()
-            if len(v_daily) >= 1 and (v_daily.iloc[-1] >= 2500000): # 2,500張
+            df_d = full_df_daily if len(tech_scan_pool) == 1 else full_df_daily.xs(ticker, axis=1, level=1)
+            v_daily = df_d['Volume'].squeeze()
+            # 1. 當日成交量 >= 5,000張 (5,000,000股) & 2. 站上季線 (MA60)
+            if len(v_daily) >= 1 and (v_daily.iloc[-1] >= 5000000) and check_above_ma60(df_d):
                 qualified_tickers.append(ticker)
         except Exception:
             continue
 
-    print(f"🎯 通過當日成交量門檻股票共 {len(qualified_tickers)} 檔。")
+    print(f"🎯 通過「5000張 + 站上季線」股票共 {len(qualified_tickers)} 檔。")
     
-    set1, set2, set3, set4, set5, set9 = set(), set(), set(), set(), set(), set()
+    set_day, set_60m, set_30m, set_rev = set(), set(), set(), set()
     label_map = {}
 
-    strat1_matches, strat2_matches, strat3_matches, strat4_matches, strat5_matches, strat9_matches = [], [], [], [], [], []
+    strat1_matches, strat2_matches, strat3_matches, strat6_matches = [], [], [], []
 
     if qualified_tickers:
         print("⏳ 步驟 2: 批次下載多週期 K 線資料 (30m, 60m, Weekly, Monthly)...")
@@ -227,82 +225,70 @@ if __name__ == "__main__":
         full_df_weekly = yf.download(qualified_tickers, period="2y", interval="1wk", progress=False, auto_adjust=True)
         full_df_monthly = yf.download(qualified_tickers, period="5y", interval="1mo", progress=False, auto_adjust=True)
 
-        print("⏳ 步驟 3: 執行技術面策略檢測...")
+        print("⏳ 步驟 3: 執行長線前置條件 (月K & 週K) 與短線策略檢測...")
         for ticker in qualified_tickers:
             try:
-                df_d = full_df_daily.xs(ticker, axis=1, level=1)
-                df_m30 = full_df_30m.xs(ticker, axis=1, level=1)
-                df_m60 = full_df_60m.xs(ticker, axis=1, level=1)
-                df_w = full_df_weekly.xs(ticker, axis=1, level=1)
-                df_m = full_df_monthly.xs(ticker, axis=1, level=1)
+                df_d = full_df_daily if len(qualified_tickers) == 1 else full_df_daily.xs(ticker, axis=1, level=1)
+                df_m30 = full_df_30m if len(qualified_tickers) == 1 else full_df_30m.xs(ticker, axis=1, level=1)
+                df_m60 = full_df_60m if len(qualified_tickers) == 1 else full_df_60m.xs(ticker, axis=1, level=1)
+                df_w = full_df_weekly if len(qualified_tickers) == 1 else full_df_weekly.xs(ticker, axis=1, level=1)
+                df_m = full_df_monthly if len(qualified_tickers) == 1 else full_df_monthly.xs(ticker, axis=1, level=1)
 
                 if df_d.empty or df_m30.empty or df_m60.empty or df_w.empty or df_m.empty: continue
 
-                # 新增前置過濾條件：必須站上 60 日線 (季線)
-                if not check_above_ma60(df_d): continue
+                # 前置過濾條件：原策略一（月K MACD > 0 & KD > 20）與 原策略二（週K MACD > 0 & KD > 50）
+                pass_monthly = check_macd_gt_zero_and_kd_above(df_m, min_kd_val=20)
+                pass_weekly = check_macd_gt_zero_and_kd_above(df_w, min_kd_val=50)
+                if not (pass_monthly and pass_weekly):
+                    continue
 
                 latest_price = float(df_d['Close'].squeeze().iloc[-1])
                 stock_label = format_stock_label(ticker, latest_price)
                 label_map[ticker] = stock_label
 
-                # 策略一：月K MACD > 0 & KD > 20
-                if check_macd_gt_zero_and_kd_above(df_m, min_kd_val=20):
-                    set1.add(ticker)
+                # 【策略一】日K MACD > 0 & KD > 20
+                if check_macd_gt_zero_and_kd_above(df_d, min_kd_val=20):
+                    set_day.add(ticker)
                     strat1_matches.append(stock_label)
 
-                # 策略二：週K MACD > 0 & KD > 50
-                if check_macd_gt_zero_and_kd_above(df_w, min_kd_val=50):
-                    set2.add(ticker)
+                # 【策略二】60分K MACD趨向0軸向上 & KD > 20
+                if check_macd_up_and_kd_above(df_m60, min_kd_val=20):
+                    set_60m.add(ticker)
                     strat2_matches.append(stock_label)
 
-                # 策略三：日K MACD > 0 & KD > 20
-                if check_macd_gt_zero_and_kd_above(df_d, min_kd_val=20):
-                    set3.add(ticker)
+                # 【策略三】30分K MACD趨向0軸向上 & KD > 20
+                if check_macd_up_and_kd_above(df_m30, min_kd_val=20):
+                    set_30m.add(ticker)
                     strat3_matches.append(stock_label)
 
-                # 策略四：60分K MACD趨向0軸向上 & KD > 20
-                if check_macd_up_and_kd_above(df_m60, min_kd_val=20):
-                    set4.add(ticker)
-                    strat4_matches.append(stock_label)
-
-                # 策略五：30分K MACD趨向0軸向上 & KD > 20
-                if check_macd_up_and_kd_above(df_m30, min_kd_val=20):
-                    set5.add(ticker)
-                    strat5_matches.append(stock_label)
-
-                # 策略九：月週 MACD > 0，日 60k MACD 綠柱縮小，30k 跌後反彈
-                if check_strategy_9(df_m, df_w, df_d, df_m60, df_m30):
-                    set9.add(ticker)
-                    strat9_matches.append(stock_label)
+                # 【策略六】長多短急轉折（月週MACD>0 + 日60k綠柱縮 + 30k跌後反彈）
+                if check_short_reversal(df_m, df_w, df_d, df_m60, df_m30):
+                    set_rev.add(ticker)
+                    strat6_matches.append(stock_label)
 
             except Exception:
                 continue
 
     # --------------------------------------------------------------------------
-    # 🔍 步驟 4: 計算重疊策略 (策略六、策略七 & 策略八)
+    # 🔍 步驟 4: 計算重疊策略 (策略四 & 策略五)
     # --------------------------------------------------------------------------
-    set6_intersection = set3 & set4          # 策略六：日分時共振 (策略三 ∩ 策略四)
-    set7_intersection = set1 & set2          # 策略七：長線趨勢共振 (策略一 ∩ 策略二)
-    set8_intersection = set6_intersection & set7_intersection # 策略八：長短全週期共振 (策略六 ∩ 策略七)
+    set4_intersection = set_day & set_60m             # 策略四：日分時共振 (策略一 ∩ 策略二)
+    set5_intersection = set_day & set_60m & set_30m   # 策略五：全短線共振 (策略一 ∩ 策略二 ∩ 策略三)
 
-    strat6_matches = [label_map[t] for t in sorted(list(set6_intersection)) if t in label_map]
-    strat7_matches = [label_map[t] for t in sorted(list(set7_intersection)) if t in label_map]
-    strat8_matches = [label_map[t] for t in sorted(list(set8_intersection)) if t in label_map]
+    strat4_matches = [label_map[t] for t in sorted(list(set4_intersection)) if t in label_map]
+    strat5_matches = [label_map[t] for t in sorted(list(set5_intersection)) if t in label_map]
 
     # 📝 建立 Telegram 報告內容
-    tw_msg = f"🇹🇼 <b>【台股盤後 9 大策略選股報告】</b>\n"
-    tw_msg += f"⚠️ <i>已過濾：當日成交量 &lt; 2500張 / 未站上季線(MA60)</i>\n"
+    tw_msg = f"🇹🇼 <b>【台股盤後精選策略報告】</b>\n"
+    tw_msg += f"🛡️ <i>基礎過濾：量 &ge; 5000張 / 站上季線 / 月K(MACD&gt;0,KD&gt;20) / 週K(MACD&gt;0,KD&gt;50)</i>\n"
     tw_msg += f"⏰ 時間: {tw_time_str}\n───────────────────\n\n"
     
-    tw_msg += "📈 <b>【策略一】月K MACD &gt; 0 & KD &gt; 20</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略二】週K MACD &gt; 0 & KD &gt; 50</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略三】日K MACD &gt; 0 & KD &gt; 20</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略四】60分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "📈 <b>【策略五】30分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "🎯 <b>【策略六】日分時共振 (策略三 ∩ 策略四)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "🎯 <b>【策略七】長線趨勢共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat7_matches) if strat7_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "🔥 <b>【策略八】長短全週期共振 (策略六 ∩ 策略七)</b>\n↳ " + (", ".join(strat8_matches) if strat8_matches else "今日無符合標的。 💤") + "\n\n"
-    tw_msg += "⚡ <b>【策略九】長多短急轉折 (月週MACD&gt;0 + 日60k綠柱縮 + 30k跌後反彈)</b>\n↳ " + (", ".join(strat9_matches) if strat9_matches else "今日無符合標的。 💤") + "\n"
+    tw_msg += "📈 <b>【策略一】日K MACD &gt; 0 & KD &gt; 20</b>\n↳ " + (", ".join(strat1_matches) if strat1_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略二】60分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat2_matches) if strat2_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "📈 <b>【策略三】30分K MACD趨向0軸向上 & KD &gt; 20</b>\n↳ " + (", ".join(strat3_matches) if strat3_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "🎯 <b>【策略四】日分時共振 (策略一 ∩ 策略二)</b>\n↳ " + (", ".join(strat4_matches) if strat4_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "🔥 <b>【策略五】全短線極致共振 (策略一 ∩ 策略二 ∩ 策略三)</b>\n↳ " + (", ".join(strat5_matches) if strat5_matches else "今日無符合標的。 💤") + "\n\n"
+    tw_msg += "⚡ <b>【策略六】長多短急轉折 (日60k綠柱縮 + 30k跌後反彈)</b>\n↳ " + (", ".join(strat6_matches) if strat6_matches else "今日無符合標的。 💤") + "\n"
 
     send_telegram_message(tw_msg)
-    print("✅ 9 大策略選股報告發送完畢！")
+    print("✅ 精選策略選股報告發送完畢！")
